@@ -44,6 +44,57 @@ class GammaSeriesResolver:
         chosen = candidates[-1]
         return _to_active_series_market(chosen)
 
+    def resolve_event_slug(self, event_slug: str) -> ActiveSeriesMarket | None:
+        quoted_slug = urllib.parse.quote(event_slug, safe="")
+        urls = [
+            f"{self._base}/events/slug/{quoted_slug}",
+            f"{self._base}/api/events/slug/{quoted_slug}",
+            f"{self._base}/events/{quoted_slug}",
+            f"{self._base}/api/events/{quoted_slug}",
+        ]
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "coinbot-alpha/0.1"})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                event = payload[0] if isinstance(payload, list) and payload else payload
+                if isinstance(event, dict):
+                    market = _event_to_active_series_market(event)
+                    if market is not None:
+                        return market
+            except Exception:  # noqa: BLE001
+                continue
+        return None
+
+    def resolve_from_seed(self, seed_slug: str) -> ActiveSeriesMarket | None:
+        family = _family_prefix(seed_slug)
+        # Best effort to keep rolling to current event in same family.
+        latest = self.resolve_latest_event_family(family)
+        if latest is not None:
+            return latest
+        # Fallback: at least parse a known-good seed slug.
+        return self.resolve_event_slug(seed_slug)
+
+    def resolve_latest_event_family(self, family_prefix: str) -> ActiveSeriesMarket | None:
+        events = self._fetch_events()
+        candidates: list[ActiveSeriesMarket] = []
+        for event in events:
+            slug = str(event.get("slug") or "")
+            if not slug.startswith(family_prefix + "-"):
+                continue
+            if _boolish(event.get("closed")):
+                continue
+            if "active" in event and not _boolish(event.get("active")):
+                continue
+            market = _event_to_active_series_market(event)
+            if market is not None:
+                candidates.append(market)
+        if not candidates:
+            # Last fallback to old markets endpoint flow.
+            return self.resolve_latest(family_prefix)
+        candidates.sort(key=lambda x: x.end_ts)
+        return candidates[-1]
+
     def _fetch_active_markets(self) -> list[dict[str, Any]]:
         q = urllib.parse.urlencode({"active": "true", "closed": "false", "limit": 5000})
         urls = [
@@ -62,6 +113,25 @@ class GammaSeriesResolver:
                 last_err = exc
         if last_err is not None:
             raise last_err
+        return []
+
+    def _fetch_events(self) -> list[dict[str, Any]]:
+        q = urllib.parse.urlencode({"active": "true", "closed": "false", "limit": 5000})
+        urls = [
+            f"{self._base}/events?{q}",
+            f"{self._base}/api/events?{q}",
+            f"{self._base}/events?limit=5000",
+            f"{self._base}/api/events?limit=5000",
+        ]
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "coinbot-alpha/0.1"})
+                with urllib.request.urlopen(req, timeout=8) as resp:
+                    payload = json.loads(resp.read().decode("utf-8"))
+                if isinstance(payload, list):
+                    return [x for x in payload if isinstance(x, dict)]
+            except Exception:  # noqa: BLE001
+                continue
         return []
 
 
@@ -103,6 +173,22 @@ def _to_active_series_market(item: dict[str, Any]) -> ActiveSeriesMarket | None:
         no_price=no[1],
         strike_price=strike,
     )
+
+
+def _event_to_active_series_market(event: dict[str, Any]) -> ActiveSeriesMarket | None:
+    markets = event.get("markets")
+    if not isinstance(markets, list) or not markets:
+        return None
+    first = markets[0]
+    if not isinstance(first, dict):
+        return None
+
+    merged = dict(first)
+    if not merged.get("slug"):
+        merged["slug"] = event.get("slug")
+    if not merged.get("endDate"):
+        merged["endDate"] = event.get("endDate")
+    return _to_active_series_market(merged)
 
 
 def _parse_ts(raw: Any) -> datetime | None:
@@ -172,3 +258,13 @@ def _parse_strike_price(question: str) -> Decimal | None:
         return Decimal(num)
     except Exception:  # noqa: BLE001
         return None
+
+
+def _family_prefix(slug: str) -> str:
+    return slug.rsplit("-", 1)[0] if "-" in slug else slug
+
+
+def _boolish(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}

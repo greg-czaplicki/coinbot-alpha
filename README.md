@@ -23,8 +23,10 @@ PYTHONPATH=src python3 -u -m coinbot_alpha.main
 ## Key Env Vars
 - `DEMO_SERIES_5M_PREFIX=btc-updown-5m`
 - `DEMO_SERIES_15M_PREFIX=btc-updown-15m`
+- `DEMO_SEED_5M_SLUG=btc-updown-5m-1771549800`
+- `DEMO_SEED_15M_SLUG=btc-updown-15m-1771551000`
 - `DEMO_EDGE_THRESHOLD_BPS=800` (8%)
-- `DEMO_MARKET_REFRESH_SEC=30`
+- `DEMO_MARKET_REFRESH_SEC=5`
 
 ## Useful Logs
 - `market_roll ...` when markets rotate

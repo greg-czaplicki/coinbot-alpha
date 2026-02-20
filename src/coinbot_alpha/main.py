@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -48,10 +49,6 @@ def _maybe_signal_side(edge_bps: Decimal, threshold_bps: int) -> Side | None:
     return None
 
 
-def _series_key(series_prefix: str) -> str:
-    return "5m" if "5m" in series_prefix else "15m"
-
-
 def main() -> None:
     setup_logging()
     log = logging.getLogger("coinbot_alpha.main")
@@ -74,7 +71,7 @@ def main() -> None:
     resolver = GammaSeriesResolver(cfg.demo.gamma_api_url)
 
     tracked: dict[str, ActiveSeriesMarket] = {}
-    last_refresh = 0.0
+    tracked_lock = threading.Lock()
     last_signal_ts: dict[str, float] = {}
 
     log.info(
@@ -86,32 +83,41 @@ def main() -> None:
         cfg.demo.edge_threshold_bps,
     )
 
+    def _refresh_market(series: str, seed_slug: str) -> None:
+        try:
+            market = resolver.resolve_from_seed(seed_slug)
+            if market is None:
+                return
+            with tracked_lock:
+                prev = tracked.get(series)
+                tracked[series] = market
+            if prev is None or prev.slug != market.slug:
+                log.info(
+                    "market_roll series=%s slug=%s condition_id=%s yes_token=%s no_token=%s end=%s",
+                    series,
+                    market.slug,
+                    market.condition_id,
+                    market.yes_token_id,
+                    market.no_token_id,
+                    market.end_ts.isoformat(),
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("market_refresh_error series=%s seed_slug=%s err=%s", series, seed_slug, exc)
+
+    def _resolver_loop() -> None:
+        while True:
+            _refresh_market("5m", cfg.demo.seed_5m_slug)
+            _refresh_market("15m", cfg.demo.seed_15m_slug)
+            time.sleep(cfg.demo.market_refresh_sec)
+
+    thread = threading.Thread(target=_resolver_loop, name="market_resolver", daemon=True)
+    thread.start()
+
     while True:
         loop_start_ns = time.perf_counter_ns()
         metrics.record_loop()
 
         now_s = time.time()
-        if now_s - last_refresh >= cfg.demo.market_refresh_sec:
-            for prefix in (cfg.demo.series_5m_prefix, cfg.demo.series_15m_prefix):
-                try:
-                    market = resolver.resolve_latest(prefix)
-                    if market is not None:
-                        key = _series_key(prefix)
-                        prev = tracked.get(key)
-                        tracked[key] = market
-                        if prev is None or prev.slug != market.slug:
-                            log.info(
-                                "market_roll series=%s slug=%s condition_id=%s yes_token=%s no_token=%s end=%s",
-                                key,
-                                market.slug,
-                                market.condition_id,
-                                market.yes_token_id,
-                                market.no_token_id,
-                                market.end_ts.isoformat(),
-                            )
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("market_refresh_error prefix=%s err=%s", prefix, exc)
-            last_refresh = now_s
 
         try:
             spot = binance.get_price()
@@ -120,7 +126,10 @@ def main() -> None:
             time.sleep(cfg.app.loop_interval_ms / 1000)
             continue
 
-        for series, market in tracked.items():
+        with tracked_lock:
+            tracked_snapshot = dict(tracked)
+
+        for series, market in tracked_snapshot.items():
             now = datetime.now(timezone.utc)
             tte_s = max(0.0, (market.end_ts - now).total_seconds())
             if market.strike_price is None:
@@ -218,7 +227,7 @@ def main() -> None:
             snap.reject_rate,
             (snap.decision_to_submit_ms.p95 if snap.decision_to_submit_ms else None),
             kill.check().active,
-            sorted(tracked.keys()),
+            sorted(tracked_snapshot.keys()),
         )
 
         time.sleep(cfg.app.loop_interval_ms / 1000)

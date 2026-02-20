@@ -35,7 +35,9 @@ class DemoConfig:
     binance_symbol: str = "BTCUSDT"
     series_5m_prefix: str = "btc-updown-5m"
     series_15m_prefix: str = "btc-updown-15m"
-    market_refresh_sec: int = 30
+    seed_5m_slug: str = "btc-updown-5m-1771549800"
+    seed_15m_slug: str = "btc-updown-15m-1771551000"
+    market_refresh_sec: int = 5
     edge_threshold_bps: int = 800
     signal_notional_usd: float = 25.0
     model_sigma_annual: float = 0.8
@@ -83,6 +85,8 @@ def load_settings() -> Settings:
             binance_symbol=os.getenv("DEMO_BINANCE_SYMBOL", DemoConfig.binance_symbol),
             series_5m_prefix=os.getenv("DEMO_SERIES_5M_PREFIX", DemoConfig.series_5m_prefix),
             series_15m_prefix=os.getenv("DEMO_SERIES_15M_PREFIX", DemoConfig.series_15m_prefix),
+            seed_5m_slug=os.getenv("DEMO_SEED_5M_SLUG", DemoConfig.seed_5m_slug),
+            seed_15m_slug=os.getenv("DEMO_SEED_15M_SLUG", DemoConfig.seed_15m_slug),
             market_refresh_sec=int(os.getenv("DEMO_MARKET_REFRESH_SEC", DemoConfig.market_refresh_sec)),
             edge_threshold_bps=int(os.getenv("DEMO_EDGE_THRESHOLD_BPS", DemoConfig.edge_threshold_bps)),
             signal_notional_usd=float(os.getenv("DEMO_SIGNAL_NOTIONAL_USD", DemoConfig.signal_notional_usd)),
@@ -107,6 +111,10 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("EXECUTION_SLIPPAGE_BPS must be >= 0")
     if settings.demo.market_refresh_sec <= 0:
         raise ValueError("DEMO_MARKET_REFRESH_SEC must be > 0")
+    if not settings.demo.seed_5m_slug:
+        raise ValueError("DEMO_SEED_5M_SLUG must be set")
+    if not settings.demo.seed_15m_slug:
+        raise ValueError("DEMO_SEED_15M_SLUG must be set")
     if settings.demo.edge_threshold_bps <= 0:
         raise ValueError("DEMO_EDGE_THRESHOLD_BPS must be > 0")
     if settings.demo.signal_notional_usd <= 0:
