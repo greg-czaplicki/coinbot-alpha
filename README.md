@@ -39,6 +39,9 @@ python3 scripts/resolve_demo_seeds.py
 - `DEMO_POS_TAKE_PROFIT_USD=18`
 - `DEMO_MIN_HOLD_SEC_5M=45`
 - `DEMO_MIN_HOLD_SEC_15M=90`
+- `DEMO_EXIT_EDGE_BPS=250`
+- `DEMO_MAX_HOLD_SEC_5M=180`
+- `DEMO_MAX_HOLD_SEC_15M=540`
 
 ## Useful Logs
 - `market_roll ...` when markets rotate

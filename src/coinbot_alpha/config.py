@@ -47,6 +47,9 @@ class DemoConfig:
     pos_take_profit_usd: float = 18.0
     min_hold_sec_5m: int = 45
     min_hold_sec_15m: int = 90
+    exit_edge_bps: int = 250
+    max_hold_sec_5m: int = 180
+    max_hold_sec_15m: int = 540
 
 
 @dataclass(frozen=True)
@@ -102,6 +105,9 @@ def load_settings() -> Settings:
             pos_take_profit_usd=float(os.getenv("DEMO_POS_TAKE_PROFIT_USD", DemoConfig.pos_take_profit_usd)),
             min_hold_sec_5m=int(os.getenv("DEMO_MIN_HOLD_SEC_5M", DemoConfig.min_hold_sec_5m)),
             min_hold_sec_15m=int(os.getenv("DEMO_MIN_HOLD_SEC_15M", DemoConfig.min_hold_sec_15m)),
+            exit_edge_bps=int(os.getenv("DEMO_EXIT_EDGE_BPS", DemoConfig.exit_edge_bps)),
+            max_hold_sec_5m=int(os.getenv("DEMO_MAX_HOLD_SEC_5M", DemoConfig.max_hold_sec_5m)),
+            max_hold_sec_15m=int(os.getenv("DEMO_MAX_HOLD_SEC_15M", DemoConfig.max_hold_sec_15m)),
         ),
     )
     validate_settings(settings)
@@ -145,3 +151,9 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("DEMO_MIN_HOLD_SEC_5M must be >= 0")
     if settings.demo.min_hold_sec_15m < 0:
         raise ValueError("DEMO_MIN_HOLD_SEC_15M must be >= 0")
+    if settings.demo.exit_edge_bps < 0:
+        raise ValueError("DEMO_EXIT_EDGE_BPS must be >= 0")
+    if settings.demo.max_hold_sec_5m <= 0:
+        raise ValueError("DEMO_MAX_HOLD_SEC_5M must be > 0")
+    if settings.demo.max_hold_sec_15m <= 0:
+        raise ValueError("DEMO_MAX_HOLD_SEC_15M must be > 0")

@@ -248,10 +248,78 @@ def main() -> None:
                 # Never trade expired markets.
                 continue
 
+            edge = _edge_bps(model_p, yes_price)
             min_hold_sec = cfg.demo.min_hold_sec_5m if series == "5m" else cfg.demo.min_hold_sec_15m
+            max_hold_sec = cfg.demo.max_hold_sec_5m if series == "5m" else cfg.demo.max_hold_sec_15m
             if executor.has_open_position(symbol):
                 held_s = now_s - position_open_ts.get(symbol, now_s)
+                if held_s >= max_hold_sec:
+                    flatten_fill = executor.flatten_symbol(symbol, yes_price)
+                    if flatten_fill is not None:
+                        position_open_ts.pop(symbol, None)
+                        audit.write(
+                            {
+                                "intent_id": flatten_fill.intent_id,
+                                "series": series,
+                                "slug": market.slug,
+                                "side": flatten_fill.side,
+                                "notional_usd": str(flatten_fill.notional_usd),
+                                "yes_price": str(yes_price),
+                                "fill_price": str(flatten_fill.fill_price),
+                                "qty": str(flatten_fill.qty),
+                                "position_qty_after": str(flatten_fill.position_qty_after),
+                                "avg_entry_price_after": str(flatten_fill.avg_entry_price_after),
+                                "realized_pnl_delta": str(flatten_fill.realized_pnl_delta),
+                                "realized_pnl_total": str(flatten_fill.realized_pnl_total),
+                                "status": "flatten_max_hold",
+                                "held_sec": round(held_s, 3),
+                            }
+                        )
+                        log.info(
+                            "series_settle series=%s slug=%s reason=max_hold held_s=%.1f px=%s realized_delta=%s",
+                            series,
+                            market.slug,
+                            held_s,
+                            yes_price,
+                            flatten_fill.realized_pnl_delta,
+                        )
+                    continue
+
                 if held_s >= min_hold_sec:
+                    if abs(edge) <= Decimal(str(cfg.demo.exit_edge_bps)):
+                        flatten_fill = executor.flatten_symbol(symbol, yes_price)
+                        if flatten_fill is not None:
+                            position_open_ts.pop(symbol, None)
+                            audit.write(
+                                {
+                                    "intent_id": flatten_fill.intent_id,
+                                    "series": series,
+                                    "slug": market.slug,
+                                    "side": flatten_fill.side,
+                                    "notional_usd": str(flatten_fill.notional_usd),
+                                    "yes_price": str(yes_price),
+                                    "fill_price": str(flatten_fill.fill_price),
+                                    "qty": str(flatten_fill.qty),
+                                    "position_qty_after": str(flatten_fill.position_qty_after),
+                                    "avg_entry_price_after": str(flatten_fill.avg_entry_price_after),
+                                    "realized_pnl_delta": str(flatten_fill.realized_pnl_delta),
+                                    "realized_pnl_total": str(flatten_fill.realized_pnl_total),
+                                    "status": "flatten_edge_compress",
+                                    "edge_bps": round(float(edge), 2),
+                                    "held_sec": round(held_s, 3),
+                                }
+                            )
+                            log.info(
+                                "series_settle series=%s slug=%s reason=edge_compress held_s=%.1f edge_bps=%s px=%s realized_delta=%s",
+                                series,
+                                market.slug,
+                                held_s,
+                                round(float(edge), 2),
+                                yes_price,
+                                flatten_fill.realized_pnl_delta,
+                            )
+                        continue
+
                     unrealized = executor.symbol_unrealized(symbol, yes_price)
                     stop_loss = Decimal(str(cfg.demo.pos_stop_loss_usd))
                     take_profit = Decimal(str(cfg.demo.pos_take_profit_usd))
@@ -296,7 +364,6 @@ def main() -> None:
                             )
                         continue
 
-            edge = _edge_bps(model_p, yes_price)
             side = _maybe_signal_side(edge, cfg.demo.edge_threshold_bps)
 
             log.info(
