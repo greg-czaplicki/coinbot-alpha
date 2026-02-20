@@ -1,0 +1,39 @@
+# coinbot-alpha
+
+Research-first auto-trading framework (separate from copy-trading).
+
+## Current Demo: BTC Latency-Divergence (5m/15m)
+- Pulls live BTC spot from Binance REST (`BTCUSDT`)
+- Auto-resolves active Polymarket BTC `5m` and `15m` rolling markets from Gamma
+- Parses YES/NO prices + strike from market metadata
+- Computes model-implied probability of finishing above strike
+- Emits paper BUY/SELL signals when edge exceeds threshold
+- Enforces risk caps and writes trade audit logs
+
+This is a **paper demo**, not production arb.
+
+## Quick Start
+```bash
+cd ~/Documents/Projects/coinbot-alpha
+cp .env.example .env
+set -a; source .env; set +a
+PYTHONPATH=src python3 -u -m coinbot_alpha.main
+```
+
+## Key Env Vars
+- `DEMO_SERIES_5M_PREFIX=btc-updown-5m`
+- `DEMO_SERIES_15M_PREFIX=btc-updown-15m`
+- `DEMO_EDGE_THRESHOLD_BPS=800` (8%)
+- `DEMO_MARKET_REFRESH_SEC=30`
+
+## Useful Logs
+- `market_roll ...` when markets rotate
+- `series_snapshot ... edge_bps=...` every loop
+- `paper_submit ...` when a signal passes risk checks
+
+## Layout
+- `src/coinbot_alpha/data`: market data and Polymarket resolver
+- `src/coinbot_alpha/strategy`: strategy interfaces
+- `src/coinbot_alpha/risk`: limits and kill switch
+- `src/coinbot_alpha/execution`: paper execution
+- `src/coinbot_alpha/telemetry`: logs, metrics, and audit
