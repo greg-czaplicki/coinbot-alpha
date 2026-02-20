@@ -414,7 +414,7 @@ def main() -> None:
             if now_s - last_flat < cfg.demo.signal_cooldown_sec:
                 continue
             if not reentry_armed.get(series, True):
-                if abs(edge) <= Decimal(str(cfg.demo.exit_edge_bps)):
+                if abs(edge) <= Decimal(str(cfg.demo.reentry_arm_bps)):
                     reentry_armed[series] = True
                 else:
                     continue
@@ -497,7 +497,7 @@ def main() -> None:
         edge_status = "; ".join(edge_status_parts) if edge_status_parts else "na"
 
         log.info(
-            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s pnl_realized=%s pnl_unrealized=%s open_positions=%s entry_edge_bps=%s exit_edge_bps=%s edge_status=%s",
+            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s pnl_realized=%s pnl_unrealized=%s open_positions=%s entry_edge_bps=%s exit_edge_bps=%s reentry_arm_bps=%s edge_status=%s",
             snap.loops,
             snap.submits,
             snap.rejects,
@@ -510,6 +510,7 @@ def main() -> None:
             ledger.open_positions,
             cfg.demo.edge_threshold_bps,
             cfg.demo.exit_edge_bps,
+            cfg.demo.reentry_arm_bps,
             edge_status,
         )
 
