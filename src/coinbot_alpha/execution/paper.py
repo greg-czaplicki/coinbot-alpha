@@ -19,6 +19,7 @@ class PaperFill:
     avg_entry_price_after: Decimal
     realized_pnl_delta: Decimal
     realized_pnl_total: Decimal
+    fee_paid: Decimal
     status: str
 
 
@@ -27,15 +28,20 @@ class PaperLedgerSnapshot:
     realized_pnl_total: Decimal
     unrealized_pnl_total: Decimal
     open_positions: int
+    trades_total: int
+    fee_paid_total: Decimal
 
 
 class PaperExecutor:
-    def __init__(self) -> None:
+    def __init__(self, fee_bps: int = 0) -> None:
         self._log = logging.getLogger("PaperExecutor")
         self._position_qty: dict[str, Decimal] = {}
         self._avg_entry_price: dict[str, Decimal] = {}
         self._marks: dict[str, Decimal] = {}
         self._realized_pnl_total = Decimal("0")
+        self._fee_bps = max(0, int(fee_bps))
+        self._fee_paid_total = Decimal("0")
+        self._trades_total = 0
 
     def submit(self, intent: OrderIntent, fill_price: Decimal) -> PaperFill:
         price = max(fill_price, Decimal("0.0001"))
@@ -69,18 +75,24 @@ class PaperExecutor:
         self._position_qty[intent.symbol] = next_qty
         self._avg_entry_price[intent.symbol] = next_avg
         self._marks[intent.symbol] = price
-        self._realized_pnl_total += realized_delta
+        fee_paid = _fee_from_notional(intent.notional_usd, self._fee_bps)
+        realized_delta_after_fee = realized_delta - fee_paid
+        self._realized_pnl_total += realized_delta_after_fee
+        self._fee_paid_total += fee_paid
+        self._trades_total += 1
 
         self._log.info(
-            "paper_submit symbol=%s side=%s notional=%s px=%s qty=%s pos_qty=%s realized_delta=%s realized_total=%s",
+            "paper_submit symbol=%s side=%s notional=%s px=%s qty=%s pos_qty=%s realized_delta=%s fee=%s realized_total=%s trades_total=%s",
             intent.symbol,
             intent.side.value,
             intent.notional_usd,
             price,
             qty,
             next_qty,
-            realized_delta,
+            realized_delta_after_fee,
+            fee_paid,
             self._realized_pnl_total,
+            self._trades_total,
         )
         return PaperFill(
             intent_id=intent.intent_id,
@@ -91,8 +103,9 @@ class PaperExecutor:
             qty=qty,
             position_qty_after=next_qty,
             avg_entry_price_after=next_avg,
-            realized_pnl_delta=realized_delta,
+            realized_pnl_delta=realized_delta_after_fee,
             realized_pnl_total=self._realized_pnl_total,
+            fee_paid=fee_paid,
             status="filled",
         )
 
@@ -119,6 +132,8 @@ class PaperExecutor:
             realized_pnl_total=self._realized_pnl_total,
             unrealized_pnl_total=unrealized_total,
             open_positions=open_positions,
+            trades_total=self._trades_total,
+            fee_paid_total=self._fee_paid_total,
         )
 
     def flatten_symbol(self, symbol: str, fill_price: Decimal) -> PaperFill | None:
@@ -138,19 +153,26 @@ class PaperExecutor:
             side = "BUY"
             realized_delta = (avg - price) * qty
 
+        fee_paid = _fee_from_notional(notional, self._fee_bps)
+        realized_delta_after_fee = realized_delta - fee_paid
+
         self._position_qty[symbol] = Decimal("0")
         self._avg_entry_price[symbol] = Decimal("0")
         self._marks[symbol] = price
-        self._realized_pnl_total += realized_delta
+        self._realized_pnl_total += realized_delta_after_fee
+        self._fee_paid_total += fee_paid
+        self._trades_total += 1
 
         self._log.info(
-            "paper_flatten symbol=%s side=%s px=%s qty=%s realized_delta=%s realized_total=%s",
+            "paper_flatten symbol=%s side=%s px=%s qty=%s realized_delta=%s fee=%s realized_total=%s trades_total=%s",
             symbol,
             side,
             price,
             qty,
-            realized_delta,
+            realized_delta_after_fee,
+            fee_paid,
             self._realized_pnl_total,
+            self._trades_total,
         )
 
         return PaperFill(
@@ -162,8 +184,9 @@ class PaperExecutor:
             qty=qty,
             position_qty_after=Decimal("0"),
             avg_entry_price_after=Decimal("0"),
-            realized_pnl_delta=realized_delta,
+            realized_pnl_delta=realized_delta_after_fee,
             realized_pnl_total=self._realized_pnl_total,
+            fee_paid=fee_paid,
             status="filled",
         )
 
@@ -185,3 +208,9 @@ def _weighted_avg(current_qty: Decimal, current_avg: Decimal, new_qty: Decimal, 
     if total_abs == 0:
         return Decimal("0")
     return ((abs(current_qty) * current_avg) + (abs(new_qty) * new_price)) / total_abs
+
+
+def _fee_from_notional(notional_usd: Decimal, fee_bps: int) -> Decimal:
+    if fee_bps <= 0:
+        return Decimal("0")
+    return notional_usd * Decimal(fee_bps) / Decimal("10000")

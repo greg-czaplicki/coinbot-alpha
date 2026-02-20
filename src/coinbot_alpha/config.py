@@ -26,6 +26,7 @@ class RiskConfig:
 class ExecutionConfig:
     dry_run: bool = True
     slippage_bps: int = 10
+    fee_bps: int = 0
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ def load_settings() -> Settings:
         execution=ExecutionConfig(
             dry_run=_get_bool("EXECUTION_DRY_RUN", ExecutionConfig.dry_run),
             slippage_bps=int(os.getenv("EXECUTION_SLIPPAGE_BPS", ExecutionConfig.slippage_bps)),
+            fee_bps=int(os.getenv("EXECUTION_FEE_BPS", ExecutionConfig.fee_bps)),
         ),
         demo=DemoConfig(
             enabled=_get_bool("DEMO_ENABLED", DemoConfig.enabled),
@@ -127,6 +129,8 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("RISK_MAX_DAILY_NOTIONAL_USD must be > 0")
     if settings.execution.slippage_bps < 0:
         raise ValueError("EXECUTION_SLIPPAGE_BPS must be >= 0")
+    if settings.execution.fee_bps < 0:
+        raise ValueError("EXECUTION_FEE_BPS must be >= 0")
     if settings.demo.market_refresh_sec <= 0:
         raise ValueError("DEMO_MARKET_REFRESH_SEC must be > 0")
     if not settings.demo.clob_api_url:

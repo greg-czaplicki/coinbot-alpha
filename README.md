@@ -43,6 +43,7 @@ python3 scripts/resolve_demo_seeds.py
 - `DEMO_REENTRY_ARM_BPS=350`
 - `DEMO_MAX_HOLD_SEC_5M=180`
 - `DEMO_MAX_HOLD_SEC_15M=540`
+- `EXECUTION_FEE_BPS=0` (paper commission model per fill)
 
 ## Useful Logs
 - `market_roll ...` when markets rotate

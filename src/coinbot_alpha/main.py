@@ -71,7 +71,7 @@ def main() -> None:
         )
     )
     kill = KillSwitch()
-    executor = PaperExecutor()
+    executor = PaperExecutor(cfg.execution.fee_bps)
 
     binance = BinanceSpotClient(cfg.demo.binance_symbol)
     resolver = ClobSeriesResolver(cfg.demo.clob_api_url)
@@ -497,7 +497,7 @@ def main() -> None:
         edge_status = "; ".join(edge_status_parts) if edge_status_parts else "na"
 
         log.info(
-            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s pnl_realized=%s pnl_unrealized=%s open_positions=%s entry_edge_bps=%s exit_edge_bps=%s reentry_arm_bps=%s edge_status=%s",
+            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s pnl_realized=%s pnl_unrealized=%s open_positions=%s trades_total=%s fee_paid_total=%s entry_edge_bps=%s exit_edge_bps=%s reentry_arm_bps=%s edge_status=%s",
             snap.loops,
             snap.submits,
             snap.rejects,
@@ -508,6 +508,8 @@ def main() -> None:
             ledger.realized_pnl_total,
             ledger.unrealized_pnl_total,
             ledger.open_positions,
+            ledger.trades_total,
+            ledger.fee_paid_total,
             cfg.demo.edge_threshold_bps,
             cfg.demo.exit_edge_bps,
             cfg.demo.reentry_arm_bps,
