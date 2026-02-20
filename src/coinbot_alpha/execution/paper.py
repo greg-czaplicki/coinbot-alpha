@@ -121,6 +121,52 @@ class PaperExecutor:
             open_positions=open_positions,
         )
 
+    def flatten_symbol(self, symbol: str, fill_price: Decimal) -> PaperFill | None:
+        current_qty = self._position_qty.get(symbol, Decimal("0"))
+        if current_qty == 0:
+            return None
+
+        price = max(fill_price, Decimal("0.0001"))
+        avg = self._avg_entry_price.get(symbol, Decimal("0"))
+        qty = abs(current_qty)
+        notional = qty * price
+
+        if current_qty > 0:
+            side = "SELL"
+            realized_delta = (price - avg) * qty
+        else:
+            side = "BUY"
+            realized_delta = (avg - price) * qty
+
+        self._position_qty[symbol] = Decimal("0")
+        self._avg_entry_price[symbol] = Decimal("0")
+        self._marks[symbol] = price
+        self._realized_pnl_total += realized_delta
+
+        self._log.info(
+            "paper_flatten symbol=%s side=%s px=%s qty=%s realized_delta=%s realized_total=%s",
+            symbol,
+            side,
+            price,
+            qty,
+            realized_delta,
+            self._realized_pnl_total,
+        )
+
+        return PaperFill(
+            intent_id="system_flatten",
+            symbol=symbol,
+            side=side,
+            notional_usd=notional,
+            fill_price=price,
+            qty=qty,
+            position_qty_after=Decimal("0"),
+            avg_entry_price_after=Decimal("0"),
+            realized_pnl_delta=realized_delta,
+            realized_pnl_total=self._realized_pnl_total,
+            status="filled",
+        )
+
 
 def _weighted_avg(current_qty: Decimal, current_avg: Decimal, new_qty: Decimal, new_price: Decimal) -> Decimal:
     total_abs = abs(current_qty) + abs(new_qty)

@@ -81,6 +81,9 @@ def main() -> None:
     tracked_lock = threading.Lock()
     last_signal_ts: dict[str, float] = {}
     market_open_spot: dict[str, Decimal] = {}
+    last_seen_slug: dict[str, str] = {}
+    last_series_yes_price: dict[str, Decimal] = {}
+    settled_slug: set[str] = set()
 
     log.info(
         "alpha_latency_demo_start mode=%s binance_symbol=%s series_5m=%s series_15m=%s edge_bps=%s",
@@ -151,6 +154,42 @@ def main() -> None:
                 feed = yes_feeds.get(series)
             yes_px = feed.latest_price() if feed is not None else None
             yes_price = yes_px if yes_px is not None else market.yes_price
+            symbol = f"btc_updown_{series}"
+
+            prev_slug = last_seen_slug.get(series)
+            if prev_slug is not None and prev_slug != market.slug:
+                close_px = last_series_yes_price.get(series, yes_price)
+                flatten_fill = executor.flatten_symbol(symbol, close_px)
+                if flatten_fill is not None:
+                    audit.write(
+                        {
+                            "intent_id": flatten_fill.intent_id,
+                            "series": series,
+                            "slug": prev_slug,
+                            "side": flatten_fill.side,
+                            "notional_usd": str(flatten_fill.notional_usd),
+                            "yes_price": str(close_px),
+                            "fill_price": str(flatten_fill.fill_price),
+                            "qty": str(flatten_fill.qty),
+                            "position_qty_after": str(flatten_fill.position_qty_after),
+                            "avg_entry_price_after": str(flatten_fill.avg_entry_price_after),
+                            "realized_pnl_delta": str(flatten_fill.realized_pnl_delta),
+                            "realized_pnl_total": str(flatten_fill.realized_pnl_total),
+                            "status": "flatten_roll",
+                        }
+                    )
+                    log.info(
+                        "series_settle series=%s from_slug=%s to_slug=%s reason=roll px=%s realized_delta=%s",
+                        series,
+                        prev_slug,
+                        market.slug,
+                        close_px,
+                        flatten_fill.realized_pnl_delta,
+                    )
+                market_open_spot.pop(prev_slug, None)
+
+            last_seen_slug[series] = market.slug
+            last_series_yes_price[series] = yes_price
 
             model_strike = market.strike_price
             if model_strike is None and _is_updown_market(market):
@@ -172,9 +211,38 @@ def main() -> None:
                 continue
 
             model_p = _model_prob_up(spot, model_strike, tte_s, cfg.demo.model_sigma_annual)
+            if tte_s <= 0 and market.slug not in settled_slug:
+                flatten_fill = executor.flatten_symbol(symbol, yes_price)
+                settled_slug.add(market.slug)
+                if flatten_fill is not None:
+                    audit.write(
+                        {
+                            "intent_id": flatten_fill.intent_id,
+                            "series": series,
+                            "slug": market.slug,
+                            "side": flatten_fill.side,
+                            "notional_usd": str(flatten_fill.notional_usd),
+                            "yes_price": str(yes_price),
+                            "fill_price": str(flatten_fill.fill_price),
+                            "qty": str(flatten_fill.qty),
+                            "position_qty_after": str(flatten_fill.position_qty_after),
+                            "avg_entry_price_after": str(flatten_fill.avg_entry_price_after),
+                            "realized_pnl_delta": str(flatten_fill.realized_pnl_delta),
+                            "realized_pnl_total": str(flatten_fill.realized_pnl_total),
+                            "status": "flatten_expiry",
+                        }
+                    )
+                    log.info(
+                        "series_settle series=%s slug=%s reason=expiry px=%s realized_delta=%s",
+                        series,
+                        market.slug,
+                        yes_price,
+                        flatten_fill.realized_pnl_delta,
+                    )
+                continue
+
             edge = _edge_bps(model_p, yes_price)
             side = _maybe_signal_side(edge, cfg.demo.edge_threshold_bps)
-            symbol = f"btc_updown_{series}"
 
             log.info(
                 "series_snapshot series=%s slug=%s spot=%s strike=%s yes_px=%s model_yes=%s edge_bps=%s tte_s=%.1f",
