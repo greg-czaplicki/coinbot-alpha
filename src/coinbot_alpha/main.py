@@ -49,6 +49,12 @@ def _maybe_signal_side(edge_bps: Decimal, threshold_bps: int) -> Side | None:
     return None
 
 
+def _is_updown_market(market: ActiveClobMarket) -> bool:
+    slug = market.slug.lower()
+    q = market.question.lower()
+    return "updown" in slug or "up or down" in q
+
+
 def main() -> None:
     setup_logging()
     log = logging.getLogger("coinbot_alpha.main")
@@ -74,6 +80,7 @@ def main() -> None:
     yes_feeds: dict[str, ClobYesPriceFeed] = {}
     tracked_lock = threading.Lock()
     last_signal_ts: dict[str, float] = {}
+    market_open_spot: dict[str, Decimal] = {}
 
     log.info(
         "alpha_latency_demo_start mode=%s binance_symbol=%s series_5m=%s series_15m=%s edge_bps=%s",
@@ -144,7 +151,16 @@ def main() -> None:
                 feed = yes_feeds.get(series)
             yes_px = feed.latest_price() if feed is not None else None
             yes_price = yes_px if yes_px is not None else market.yes_price
-            if market.strike_price is None:
+
+            model_strike = market.strike_price
+            if model_strike is None and _is_updown_market(market):
+                open_spot = market_open_spot.get(market.slug)
+                if open_spot is None:
+                    open_spot = spot
+                    market_open_spot[market.slug] = open_spot
+                model_strike = open_spot
+
+            if model_strike is None:
                 log.info(
                     "series_snapshot series=%s slug=%s spot=%s yes_px=%s strike=na tte_s=%.1f note=no_strike_parse",
                     series,
@@ -155,7 +171,7 @@ def main() -> None:
                 )
                 continue
 
-            model_p = _model_prob_up(spot, market.strike_price, tte_s, cfg.demo.model_sigma_annual)
+            model_p = _model_prob_up(spot, model_strike, tte_s, cfg.demo.model_sigma_annual)
             edge = _edge_bps(model_p, yes_price)
             side = _maybe_signal_side(edge, cfg.demo.edge_threshold_bps)
             symbol = f"btc_updown_{series}"
@@ -165,7 +181,7 @@ def main() -> None:
                 series,
                 market.slug,
                 spot,
-                market.strike_price,
+                model_strike,
                 yes_price,
                 model_p,
                 round(float(edge), 2),
@@ -218,7 +234,7 @@ def main() -> None:
                     "side": intent.side.value,
                     "notional_usd": str(intent.notional_usd),
                     "spot": str(spot),
-                    "strike": str(market.strike_price),
+                    "strike": str(model_strike),
                     "yes_price": str(yes_price),
                     "fill_price": str(fill.fill_price),
                     "qty": str(fill.qty),
