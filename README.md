@@ -35,6 +35,10 @@ python3 scripts/resolve_demo_seeds.py
 - `DEMO_SEED_15M_SLUG=btc-updown-15m-1771551000`
 - `DEMO_EDGE_THRESHOLD_BPS=800` (8%)
 - `DEMO_MARKET_REFRESH_SEC=5`
+- `DEMO_POS_STOP_LOSS_USD=12`
+- `DEMO_POS_TAKE_PROFIT_USD=18`
+- `DEMO_MIN_HOLD_SEC_5M=45`
+- `DEMO_MIN_HOLD_SEC_15M=90`
 
 ## Useful Logs
 - `market_roll ...` when markets rotate

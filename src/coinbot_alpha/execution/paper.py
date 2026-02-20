@@ -167,6 +167,18 @@ class PaperExecutor:
             status="filled",
         )
 
+    def has_open_position(self, symbol: str) -> bool:
+        return self._position_qty.get(symbol, Decimal("0")) != 0
+
+    def symbol_unrealized(self, symbol: str, mark: Decimal) -> Decimal:
+        qty = self._position_qty.get(symbol, Decimal("0"))
+        if qty == 0:
+            return Decimal("0")
+        avg = self._avg_entry_price.get(symbol, Decimal("0"))
+        if qty > 0:
+            return (mark - avg) * qty
+        return (avg - mark) * abs(qty)
+
 
 def _weighted_avg(current_qty: Decimal, current_avg: Decimal, new_qty: Decimal, new_price: Decimal) -> Decimal:
     total_abs = abs(current_qty) + abs(new_qty)

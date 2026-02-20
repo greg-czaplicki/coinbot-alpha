@@ -85,6 +85,7 @@ def main() -> None:
     last_series_yes_price: dict[str, Decimal] = {}
     settled_slug: set[str] = set()
     traded_slug: dict[str, str] = {}
+    position_open_ts: dict[str, float] = {}
 
     log.info(
         "alpha_latency_demo_start mode=%s binance_symbol=%s series_5m=%s series_15m=%s edge_bps=%s",
@@ -162,6 +163,7 @@ def main() -> None:
                 close_px = last_series_yes_price.get(series, yes_price)
                 flatten_fill = executor.flatten_symbol(symbol, close_px)
                 if flatten_fill is not None:
+                    position_open_ts.pop(symbol, None)
                     audit.write(
                         {
                             "intent_id": flatten_fill.intent_id,
@@ -216,6 +218,7 @@ def main() -> None:
                 flatten_fill = executor.flatten_symbol(symbol, yes_price)
                 settled_slug.add(market.slug)
                 if flatten_fill is not None:
+                    position_open_ts.pop(symbol, None)
                     audit.write(
                         {
                             "intent_id": flatten_fill.intent_id,
@@ -244,6 +247,54 @@ def main() -> None:
             if tte_s <= 0:
                 # Never trade expired markets.
                 continue
+
+            min_hold_sec = cfg.demo.min_hold_sec_5m if series == "5m" else cfg.demo.min_hold_sec_15m
+            if executor.has_open_position(symbol):
+                held_s = now_s - position_open_ts.get(symbol, now_s)
+                if held_s >= min_hold_sec:
+                    unrealized = executor.symbol_unrealized(symbol, yes_price)
+                    stop_loss = Decimal(str(cfg.demo.pos_stop_loss_usd))
+                    take_profit = Decimal(str(cfg.demo.pos_take_profit_usd))
+                    settle_reason = ""
+                    if unrealized <= -stop_loss:
+                        settle_reason = "stop_loss"
+                    elif unrealized >= take_profit:
+                        settle_reason = "take_profit"
+
+                    if settle_reason:
+                        flatten_fill = executor.flatten_symbol(symbol, yes_price)
+                        if flatten_fill is not None:
+                            position_open_ts.pop(symbol, None)
+                            audit.write(
+                                {
+                                    "intent_id": flatten_fill.intent_id,
+                                    "series": series,
+                                    "slug": market.slug,
+                                    "side": flatten_fill.side,
+                                    "notional_usd": str(flatten_fill.notional_usd),
+                                    "yes_price": str(yes_price),
+                                    "fill_price": str(flatten_fill.fill_price),
+                                    "qty": str(flatten_fill.qty),
+                                    "position_qty_after": str(flatten_fill.position_qty_after),
+                                    "avg_entry_price_after": str(flatten_fill.avg_entry_price_after),
+                                    "realized_pnl_delta": str(flatten_fill.realized_pnl_delta),
+                                    "realized_pnl_total": str(flatten_fill.realized_pnl_total),
+                                    "status": f"flatten_{settle_reason}",
+                                    "unrealized_pnl_at_exit": str(unrealized),
+                                    "held_sec": round(held_s, 3),
+                                }
+                            )
+                            log.info(
+                                "series_settle series=%s slug=%s reason=%s held_s=%.1f px=%s unrealized=%s realized_delta=%s",
+                                series,
+                                market.slug,
+                                settle_reason,
+                                held_s,
+                                yes_price,
+                                unrealized,
+                                flatten_fill.realized_pnl_delta,
+                            )
+                        continue
 
             edge = _edge_bps(model_p, yes_price)
             side = _maybe_signal_side(edge, cfg.demo.edge_threshold_bps)
@@ -300,6 +351,10 @@ def main() -> None:
             fill = executor.submit(intent, yes_price)
             last_signal_ts[series] = now_s
             traded_slug[series] = market.slug
+            if fill.position_qty_after != 0 and symbol not in position_open_ts:
+                position_open_ts[symbol] = now_s
+            elif fill.position_qty_after == 0:
+                position_open_ts.pop(symbol, None)
             latency_ms = (time.perf_counter_ns() - loop_start_ns) / 1_000_000
             metrics.record_submit(latency_ms)
             audit.write(

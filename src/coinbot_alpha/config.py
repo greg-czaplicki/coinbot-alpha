@@ -43,6 +43,10 @@ class DemoConfig:
     signal_notional_usd: float = 25.0
     model_sigma_annual: float = 0.8
     signal_cooldown_sec: int = 20
+    pos_stop_loss_usd: float = 12.0
+    pos_take_profit_usd: float = 18.0
+    min_hold_sec_5m: int = 45
+    min_hold_sec_15m: int = 90
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,10 @@ def load_settings() -> Settings:
             signal_notional_usd=float(os.getenv("DEMO_SIGNAL_NOTIONAL_USD", DemoConfig.signal_notional_usd)),
             model_sigma_annual=float(os.getenv("DEMO_MODEL_SIGMA_ANNUAL", DemoConfig.model_sigma_annual)),
             signal_cooldown_sec=int(os.getenv("DEMO_SIGNAL_COOLDOWN_SEC", DemoConfig.signal_cooldown_sec)),
+            pos_stop_loss_usd=float(os.getenv("DEMO_POS_STOP_LOSS_USD", DemoConfig.pos_stop_loss_usd)),
+            pos_take_profit_usd=float(os.getenv("DEMO_POS_TAKE_PROFIT_USD", DemoConfig.pos_take_profit_usd)),
+            min_hold_sec_5m=int(os.getenv("DEMO_MIN_HOLD_SEC_5M", DemoConfig.min_hold_sec_5m)),
+            min_hold_sec_15m=int(os.getenv("DEMO_MIN_HOLD_SEC_15M", DemoConfig.min_hold_sec_15m)),
         ),
     )
     validate_settings(settings)
@@ -129,3 +137,11 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("DEMO_MODEL_SIGMA_ANNUAL must be > 0")
     if settings.demo.signal_cooldown_sec < 0:
         raise ValueError("DEMO_SIGNAL_COOLDOWN_SEC must be >= 0")
+    if settings.demo.pos_stop_loss_usd <= 0:
+        raise ValueError("DEMO_POS_STOP_LOSS_USD must be > 0")
+    if settings.demo.pos_take_profit_usd <= 0:
+        raise ValueError("DEMO_POS_TAKE_PROFIT_USD must be > 0")
+    if settings.demo.min_hold_sec_5m < 0:
+        raise ValueError("DEMO_MIN_HOLD_SEC_5M must be >= 0")
+    if settings.demo.min_hold_sec_15m < 0:
+        raise ValueError("DEMO_MIN_HOLD_SEC_15M must be >= 0")
