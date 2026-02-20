@@ -31,7 +31,8 @@ class ExecutionConfig:
 @dataclass(frozen=True)
 class DemoConfig:
     enabled: bool = True
-    gamma_api_url: str = "https://gamma-api.polymarket.com"
+    clob_api_url: str = "https://clob.polymarket.com"
+    clob_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     binance_symbol: str = "BTCUSDT"
     series_5m_prefix: str = "btc-updown-5m"
     series_15m_prefix: str = "btc-updown-15m"
@@ -81,7 +82,8 @@ def load_settings() -> Settings:
         ),
         demo=DemoConfig(
             enabled=_get_bool("DEMO_ENABLED", DemoConfig.enabled),
-            gamma_api_url=os.getenv("DEMO_GAMMA_API_URL", DemoConfig.gamma_api_url),
+            clob_api_url=os.getenv("DEMO_CLOB_API_URL", DemoConfig.clob_api_url),
+            clob_ws_url=os.getenv("DEMO_CLOB_WS_URL", DemoConfig.clob_ws_url),
             binance_symbol=os.getenv("DEMO_BINANCE_SYMBOL", DemoConfig.binance_symbol),
             series_5m_prefix=os.getenv("DEMO_SERIES_5M_PREFIX", DemoConfig.series_5m_prefix),
             series_15m_prefix=os.getenv("DEMO_SERIES_15M_PREFIX", DemoConfig.series_15m_prefix),
@@ -111,6 +113,10 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("EXECUTION_SLIPPAGE_BPS must be >= 0")
     if settings.demo.market_refresh_sec <= 0:
         raise ValueError("DEMO_MARKET_REFRESH_SEC must be > 0")
+    if not settings.demo.clob_api_url:
+        raise ValueError("DEMO_CLOB_API_URL must be set")
+    if not settings.demo.clob_ws_url:
+        raise ValueError("DEMO_CLOB_WS_URL must be set")
     if not settings.demo.seed_5m_slug:
         raise ValueError("DEMO_SEED_5M_SLUG must be set")
     if not settings.demo.seed_15m_slug:

@@ -4,7 +4,8 @@ Research-first auto-trading framework (separate from copy-trading).
 
 ## Current Demo: BTC Latency-Divergence (5m/15m)
 - Pulls live BTC spot from Binance REST (`BTCUSDT`)
-- Auto-resolves active Polymarket BTC `5m` and `15m` rolling markets from Gamma
+- Auto-resolves active Polymarket BTC `5m` and `15m` rolling markets from CLOB
+- Streams YES price updates from Polymarket CLOB websocket
 - Parses YES/NO prices + strike from market metadata
 - Computes model-implied probability of finishing above strike
 - Emits paper BUY/SELL signals when edge exceeds threshold
@@ -21,6 +22,8 @@ PYTHONPATH=src python3 -u -m coinbot_alpha.main
 ```
 
 ## Key Env Vars
+- `DEMO_CLOB_API_URL=https://clob.polymarket.com`
+- `DEMO_CLOB_WS_URL=wss://ws-subscriptions-clob.polymarket.com/ws/market`
 - `DEMO_SERIES_5M_PREFIX=btc-updown-5m`
 - `DEMO_SERIES_15M_PREFIX=btc-updown-15m`
 - `DEMO_SEED_5M_SLUG=btc-updown-5m-1771549800`

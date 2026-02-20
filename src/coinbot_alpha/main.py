@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from coinbot_alpha.config import load_settings
 from coinbot_alpha.data.binance import BinanceSpotClient
-from coinbot_alpha.data.polymarket import ActiveSeriesMarket, GammaSeriesResolver
+from coinbot_alpha.data.polymarket_clob import ActiveClobMarket, ClobSeriesResolver, ClobYesPriceFeed
 from coinbot_alpha.execution.paper import PaperExecutor
 from coinbot_alpha.risk.kill_switch import KillSwitch
 from coinbot_alpha.risk.limits import RiskEngine, RiskLimits
@@ -68,9 +68,10 @@ def main() -> None:
     executor = PaperExecutor()
 
     binance = BinanceSpotClient(cfg.demo.binance_symbol)
-    resolver = GammaSeriesResolver(cfg.demo.gamma_api_url)
+    resolver = ClobSeriesResolver(cfg.demo.clob_api_url)
 
-    tracked: dict[str, ActiveSeriesMarket] = {}
+    tracked: dict[str, ActiveClobMarket] = {}
+    yes_feeds: dict[str, ClobYesPriceFeed] = {}
     tracked_lock = threading.Lock()
     last_signal_ts: dict[str, float] = {}
 
@@ -92,6 +93,13 @@ def main() -> None:
                 prev = tracked.get(series)
                 tracked[series] = market
             if prev is None or prev.slug != market.slug:
+                with tracked_lock:
+                    prev_feed = yes_feeds.get(series)
+                    if prev_feed is not None:
+                        prev_feed.stop()
+                    feed = ClobYesPriceFeed(cfg.demo.clob_ws_url, market.yes_token_id, market.yes_price)
+                    feed.start()
+                    yes_feeds[series] = feed
                 log.info(
                     "market_roll series=%s slug=%s condition_id=%s yes_token=%s no_token=%s end=%s",
                     series,
@@ -132,19 +140,23 @@ def main() -> None:
         for series, market in tracked_snapshot.items():
             now = datetime.now(timezone.utc)
             tte_s = max(0.0, (market.end_ts - now).total_seconds())
+            with tracked_lock:
+                feed = yes_feeds.get(series)
+            yes_px = feed.latest_price() if feed is not None else None
+            yes_price = yes_px if yes_px is not None else market.yes_price
             if market.strike_price is None:
                 log.info(
                     "series_snapshot series=%s slug=%s spot=%s yes_px=%s strike=na tte_s=%.1f note=no_strike_parse",
                     series,
                     market.slug,
                     spot,
-                    market.yes_price,
+                    yes_price,
                     tte_s,
                 )
                 continue
 
             model_p = _model_prob_up(spot, market.strike_price, tte_s, cfg.demo.model_sigma_annual)
-            edge = _edge_bps(model_p, market.yes_price)
+            edge = _edge_bps(model_p, yes_price)
             side = _maybe_signal_side(edge, cfg.demo.edge_threshold_bps)
 
             log.info(
@@ -153,7 +165,7 @@ def main() -> None:
                 market.slug,
                 spot,
                 market.strike_price,
-                market.yes_price,
+                yes_price,
                 model_p,
                 round(float(edge), 2),
                 tte_s,
@@ -206,7 +218,7 @@ def main() -> None:
                     "notional_usd": str(intent.notional_usd),
                     "spot": str(spot),
                     "strike": str(market.strike_price),
-                    "yes_price": str(market.yes_price),
+                    "yes_price": str(yes_price),
                     "model_yes": str(model_p),
                     "edge_bps": round(float(edge), 2),
                     "submit_latency_ms": round(latency_ms, 3),
