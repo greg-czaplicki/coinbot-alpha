@@ -31,7 +31,7 @@ class ExecutionConfig:
 @dataclass(frozen=True)
 class DemoConfig:
     enabled: bool = True
-    clob_api_url: str = "https://clob.polymarket.com"
+    clob_api_url: str = "https://gamma-api.polymarket.com"
     clob_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     binance_symbol: str = "BTCUSDT"
     series_5m_prefix: str = "btc-updown-5m"

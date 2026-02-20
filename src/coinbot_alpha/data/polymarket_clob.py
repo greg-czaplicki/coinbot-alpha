@@ -34,9 +34,24 @@ class ActiveClobMarket:
 class ClobSeriesResolver:
     def __init__(self, clob_api_url: str) -> None:
         self._base = clob_api_url.rstrip("/")
+        self._family_last_slug: dict[str, str] = {}
 
     def resolve_from_seed(self, seed_slug: str) -> ActiveClobMarket | None:
         family = _family_prefix(seed_slug)
+        interval_sec = _slug_interval_seconds(seed_slug) or 300
+
+        for slug in self._candidate_slugs(family, seed_slug, interval_sec):
+            item = self._fetch_market_by_slug(slug)
+            if not item:
+                continue
+            if not bool(item.get("active", True)) or bool(item.get("closed", False)):
+                continue
+            market = _to_active_clob_market(item)
+            if market is not None:
+                self._family_last_slug[family] = market.slug
+                return market
+
+        # Fallback for legacy behavior on the CLOB sampling endpoint.
         markets = self._fetch_sampling_markets()
         candidates = [
             m
@@ -52,11 +67,71 @@ class ClobSeriesResolver:
                 if str(m.get("market_slug") or "") == seed_slug
                 and bool(m.get("active", True))
                 and not bool(m.get("closed", False))
-            ]
+        ]
         if not candidates:
             return None
         candidates.sort(key=lambda x: _parse_ts(x.get("end_date_iso")) or datetime.min.replace(tzinfo=timezone.utc))
-        return _to_active_clob_market(candidates[-1])
+        market = _to_active_clob_market(candidates[-1])
+        if market is not None:
+            self._family_last_slug[family] = market.slug
+        return market
+
+    def _candidate_slugs(self, family: str, seed_slug: str, interval_sec: int) -> list[str]:
+        now_ts = int(time.time())
+        now_bucket = now_ts - (now_ts % interval_sec)
+        candidates = [seed_slug]
+
+        last_slug = self._family_last_slug.get(family)
+        if last_slug:
+            candidates.append(last_slug)
+            last_ts = _slug_timestamp(last_slug)
+            if last_ts is not None:
+                candidates.extend(
+                    [
+                        f"{family}-{last_ts + interval_sec}",
+                        f"{family}-{last_ts + (2 * interval_sec)}",
+                        f"{family}-{last_ts - interval_sec}",
+                    ]
+                )
+
+        candidates.extend(
+            [
+                f"{family}-{now_bucket + interval_sec}",
+                f"{family}-{now_bucket}",
+                f"{family}-{now_bucket - interval_sec}",
+                f"{family}-{now_bucket - (2 * interval_sec)}",
+                f"{family}-{now_bucket - (3 * interval_sec)}",
+            ]
+        )
+
+        seen: set[str] = set()
+        out: list[str] = []
+        for slug in candidates:
+            if slug in seen:
+                continue
+            seen.add(slug)
+            out.append(slug)
+        return out
+
+    def _fetch_market_by_slug(self, slug: str) -> dict[str, Any] | None:
+        url = f"{self._base}/markets?{urllib.parse.urlencode({'slug': slug})}"
+        req = urllib.request.Request(url, headers={"User-Agent": "coinbot-alpha/0.1"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict) and str(item.get("slug") or "") == slug:
+                    return _normalize_gamma_market(item)
+            return None
+
+        if isinstance(payload, dict):
+            data = payload.get("data")
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and str(item.get("market_slug") or "") == slug:
+                        return item
+        return None
 
     def _fetch_sampling_markets(self) -> list[dict[str, Any]]:
         cursor = "MA=="
@@ -185,8 +260,8 @@ def _to_active_clob_market(item: dict[str, Any]) -> ActiveClobMarket | None:
     if not isinstance(tokens, list) or len(tokens) < 2:
         return None
 
-    yes = _pick_outcome(tokens, "yes")
-    no = _pick_outcome(tokens, "no")
+    yes = _pick_outcome(tokens, {"yes", "up"})
+    no = _pick_outcome(tokens, {"no", "down"})
     if yes is None or no is None:
         return None
 
@@ -204,13 +279,13 @@ def _to_active_clob_market(item: dict[str, Any]) -> ActiveClobMarket | None:
     )
 
 
-def _pick_outcome(tokens: list[Any], name: str) -> tuple[str, Decimal] | None:
-    target = name.lower()
+def _pick_outcome(tokens: list[Any], names: set[str]) -> tuple[str, Decimal] | None:
+    targets = {x.lower() for x in names}
     for token in tokens:
         if not isinstance(token, dict):
             continue
         outcome = str(token.get("outcome") or "").strip().lower()
-        if outcome != target:
+        if outcome not in targets:
             continue
         token_id = str(token.get("token_id") or "")
         if not token_id:
@@ -260,3 +335,67 @@ def _parse_strike_price(question: str) -> Decimal | None:
 
 def _family_prefix(slug: str) -> str:
     return slug.rsplit("-", 1)[0] if "-" in slug else slug
+
+
+def _slug_timestamp(slug: str) -> int | None:
+    m = re.match(r".+-(\d{9,12})$", slug)
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
+def _slug_interval_seconds(seed_slug: str) -> int | None:
+    family = _family_prefix(seed_slug)
+    m = re.search(r"-(\d+)m$", family)
+    if not m:
+        return None
+    try:
+        minutes = int(m.group(1))
+    except ValueError:
+        return None
+    if minutes <= 0:
+        return None
+    return minutes * 60
+
+
+def _normalize_gamma_market(item: dict[str, Any]) -> dict[str, Any]:
+    token_ids = _parse_json_string_list(item.get("clobTokenIds"))
+    outcomes = _parse_json_string_list(item.get("outcomes"))
+    prices_raw = _parse_json_string_list(item.get("outcomePrices"))
+
+    prices: list[Decimal] = []
+    for raw in prices_raw:
+        try:
+            prices.append(Decimal(str(raw)))
+        except Exception:  # noqa: BLE001
+            prices.append(Decimal("0"))
+
+    tokens: list[dict[str, Any]] = []
+    for idx in range(min(len(token_ids), len(outcomes))):
+        price = prices[idx] if idx < len(prices) else Decimal("0")
+        tokens.append({"token_id": str(token_ids[idx]), "outcome": str(outcomes[idx]), "price": price})
+
+    return {
+        "market_slug": str(item.get("slug") or ""),
+        "condition_id": str(item.get("conditionId") or ""),
+        "question": str(item.get("question") or ""),
+        "end_date_iso": item.get("endDate"),
+        "active": bool(item.get("active", True)),
+        "closed": bool(item.get("closed", False)),
+        "tokens": tokens,
+    }
+
+
+def _parse_json_string_list(value: Any) -> list[Any]:
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return decoded if isinstance(decoded, list) else []
+    return []
