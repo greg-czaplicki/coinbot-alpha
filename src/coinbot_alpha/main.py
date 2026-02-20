@@ -84,6 +84,7 @@ def main() -> None:
     last_seen_slug: dict[str, str] = {}
     last_series_yes_price: dict[str, Decimal] = {}
     settled_slug: set[str] = set()
+    traded_slug: dict[str, str] = {}
 
     log.info(
         "alpha_latency_demo_start mode=%s binance_symbol=%s series_5m=%s series_15m=%s edge_bps=%s",
@@ -240,6 +241,9 @@ def main() -> None:
                         flatten_fill.realized_pnl_delta,
                     )
                 continue
+            if tte_s <= 0:
+                # Never trade expired markets.
+                continue
 
             edge = _edge_bps(model_p, yes_price)
             side = _maybe_signal_side(edge, cfg.demo.edge_threshold_bps)
@@ -267,6 +271,9 @@ def main() -> None:
             last_for_series = last_signal_ts.get(series, 0.0)
             if now_s - last_for_series < cfg.demo.signal_cooldown_sec:
                 continue
+            if traded_slug.get(series) == market.slug:
+                # Prevent repeated stacking in the same contract window.
+                continue
 
             intent = OrderIntent(
                 intent_id=str(uuid4()),
@@ -292,6 +299,7 @@ def main() -> None:
 
             fill = executor.submit(intent, yes_price)
             last_signal_ts[series] = now_s
+            traded_slug[series] = market.slug
             latency_ms = (time.perf_counter_ns() - loop_start_ns) / 1_000_000
             metrics.record_submit(latency_ms)
             audit.write(
