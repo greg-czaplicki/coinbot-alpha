@@ -35,6 +35,7 @@ PYTHONPATH=src python3 -u -m coinbot_alpha.main
 - `market_roll ...` when markets rotate
 - `series_snapshot ... edge_bps=...` every loop
 - `paper_submit ...` when a signal passes risk checks
+- `telemetry_snapshot ... pnl_realized=... pnl_unrealized=...` for paper PnL tracking
 
 ## Layout
 - `src/coinbot_alpha/data`: market data and Polymarket resolver

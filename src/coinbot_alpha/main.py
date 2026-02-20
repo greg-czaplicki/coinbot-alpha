@@ -158,6 +158,7 @@ def main() -> None:
             model_p = _model_prob_up(spot, market.strike_price, tte_s, cfg.demo.model_sigma_annual)
             edge = _edge_bps(model_p, yes_price)
             side = _maybe_signal_side(edge, cfg.demo.edge_threshold_bps)
+            symbol = f"btc_updown_{series}"
 
             log.info(
                 "series_snapshot series=%s slug=%s spot=%s strike=%s yes_px=%s model_yes=%s edge_bps=%s tte_s=%.1f",
@@ -185,7 +186,7 @@ def main() -> None:
 
             intent = OrderIntent(
                 intent_id=str(uuid4()),
-                symbol=f"btc_updown_{series}",
+                symbol=symbol,
                 side=side,
                 notional_usd=Decimal(str(cfg.demo.signal_notional_usd)),
                 slippage_bps=cfg.execution.slippage_bps,
@@ -205,7 +206,7 @@ def main() -> None:
                 )
                 continue
 
-            executor.submit(intent)
+            fill = executor.submit(intent, yes_price)
             last_signal_ts[series] = now_s
             latency_ms = (time.perf_counter_ns() - loop_start_ns) / 1_000_000
             metrics.record_submit(latency_ms)
@@ -219,6 +220,12 @@ def main() -> None:
                     "spot": str(spot),
                     "strike": str(market.strike_price),
                     "yes_price": str(yes_price),
+                    "fill_price": str(fill.fill_price),
+                    "qty": str(fill.qty),
+                    "position_qty_after": str(fill.position_qty_after),
+                    "avg_entry_price_after": str(fill.avg_entry_price_after),
+                    "realized_pnl_delta": str(fill.realized_pnl_delta),
+                    "realized_pnl_total": str(fill.realized_pnl_total),
                     "model_yes": str(model_p),
                     "edge_bps": round(float(edge), 2),
                     "submit_latency_ms": round(latency_ms, 3),
@@ -227,12 +234,19 @@ def main() -> None:
             )
 
         snap = metrics.snapshot()
+        marks = {}
+        for series, market in tracked_snapshot.items():
+            with tracked_lock:
+                feed = yes_feeds.get(series)
+            yes_px = feed.latest_price() if feed is not None else None
+            marks[f"btc_updown_{series}"] = yes_px if yes_px is not None else market.yes_price
+        ledger = executor.snapshot(marks)
         alert_state = alerts.evaluate(snap)
         if alert_state.reject_spike_breach:
             kill.activate("reject_spike")
 
         log.info(
-            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s",
+            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s pnl_realized=%s pnl_unrealized=%s open_positions=%s",
             snap.loops,
             snap.submits,
             snap.rejects,
@@ -240,6 +254,9 @@ def main() -> None:
             (snap.decision_to_submit_ms.p95 if snap.decision_to_submit_ms else None),
             kill.check().active,
             sorted(tracked_snapshot.keys()),
+            ledger.realized_pnl_total,
+            ledger.unrealized_pnl_total,
+            ledger.open_positions,
         )
 
         time.sleep(cfg.app.loop_interval_ms / 1000)
