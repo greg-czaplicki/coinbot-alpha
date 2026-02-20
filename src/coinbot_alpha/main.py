@@ -193,6 +193,8 @@ def main() -> None:
                         flatten_fill.realized_pnl_delta,
                     )
                 market_open_spot.pop(prev_slug, None)
+                # A new contract window should always start re-armed.
+                reentry_armed[series] = True
 
             last_seen_slug[series] = market.slug
             last_series_yes_price[series] = yes_price
