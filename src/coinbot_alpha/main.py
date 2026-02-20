@@ -139,6 +139,8 @@ def main() -> None:
         metrics.record_loop()
 
         now_s = time.time()
+        edge_snapshot: dict[str, Decimal] = {}
+        entry_distance_snapshot: dict[str, Decimal] = {}
 
         try:
             spot = binance.get_price()
@@ -256,6 +258,8 @@ def main() -> None:
                 continue
 
             edge = _edge_bps(model_p, yes_price)
+            edge_snapshot[series] = edge
+            entry_distance_snapshot[series] = Decimal(str(cfg.demo.edge_threshold_bps)) - abs(edge)
             min_hold_sec = cfg.demo.min_hold_sec_5m if series == "5m" else cfg.demo.min_hold_sec_15m
             max_hold_sec = cfg.demo.max_hold_sec_5m if series == "5m" else cfg.demo.max_hold_sec_15m
             if executor.has_open_position(symbol):
@@ -481,8 +485,19 @@ def main() -> None:
         if alert_state.reject_spike_breach:
             kill.activate("reject_spike")
 
+        edge_status_parts = []
+        for series in sorted(tracked_snapshot.keys()):
+            edge = edge_snapshot.get(series)
+            dist = entry_distance_snapshot.get(series)
+            if edge is None or dist is None:
+                continue
+            edge_status_parts.append(
+                f"{series}:edge_bps={round(float(edge),2)} to_entry_bps={round(float(dist),2)}"
+            )
+        edge_status = "; ".join(edge_status_parts) if edge_status_parts else "na"
+
         log.info(
-            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s pnl_realized=%s pnl_unrealized=%s open_positions=%s",
+            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s pnl_realized=%s pnl_unrealized=%s open_positions=%s entry_edge_bps=%s exit_edge_bps=%s edge_status=%s",
             snap.loops,
             snap.submits,
             snap.rejects,
@@ -493,6 +508,9 @@ def main() -> None:
             ledger.realized_pnl_total,
             ledger.unrealized_pnl_total,
             ledger.open_positions,
+            cfg.demo.edge_threshold_bps,
+            cfg.demo.exit_edge_bps,
+            edge_status,
         )
 
         time.sleep(cfg.app.loop_interval_ms / 1000)
