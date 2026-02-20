@@ -84,8 +84,9 @@ def main() -> None:
     last_seen_slug: dict[str, str] = {}
     last_series_yes_price: dict[str, Decimal] = {}
     settled_slug: set[str] = set()
-    traded_slug: dict[str, str] = {}
     position_open_ts: dict[str, float] = {}
+    last_flat_ts: dict[str, float] = {}
+    reentry_armed: dict[str, bool] = {}
 
     log.info(
         "alpha_latency_demo_start mode=%s binance_symbol=%s series_5m=%s series_15m=%s edge_bps=%s",
@@ -164,6 +165,8 @@ def main() -> None:
                 flatten_fill = executor.flatten_symbol(symbol, close_px)
                 if flatten_fill is not None:
                     position_open_ts.pop(symbol, None)
+                    last_flat_ts[series] = now_s
+                    reentry_armed[series] = False
                     audit.write(
                         {
                             "intent_id": flatten_fill.intent_id,
@@ -219,6 +222,8 @@ def main() -> None:
                 settled_slug.add(market.slug)
                 if flatten_fill is not None:
                     position_open_ts.pop(symbol, None)
+                    last_flat_ts[series] = now_s
+                    reentry_armed[series] = False
                     audit.write(
                         {
                             "intent_id": flatten_fill.intent_id,
@@ -257,6 +262,8 @@ def main() -> None:
                     flatten_fill = executor.flatten_symbol(symbol, yes_price)
                     if flatten_fill is not None:
                         position_open_ts.pop(symbol, None)
+                        last_flat_ts[series] = now_s
+                        reentry_armed[series] = False
                         audit.write(
                             {
                                 "intent_id": flatten_fill.intent_id,
@@ -290,6 +297,8 @@ def main() -> None:
                         flatten_fill = executor.flatten_symbol(symbol, yes_price)
                         if flatten_fill is not None:
                             position_open_ts.pop(symbol, None)
+                            last_flat_ts[series] = now_s
+                            reentry_armed[series] = False
                             audit.write(
                                 {
                                     "intent_id": flatten_fill.intent_id,
@@ -333,6 +342,8 @@ def main() -> None:
                         flatten_fill = executor.flatten_symbol(symbol, yes_price)
                         if flatten_fill is not None:
                             position_open_ts.pop(symbol, None)
+                            last_flat_ts[series] = now_s
+                            reentry_armed[series] = False
                             audit.write(
                                 {
                                     "intent_id": flatten_fill.intent_id,
@@ -381,6 +392,10 @@ def main() -> None:
             if side is None:
                 continue
 
+            if executor.has_open_position(symbol):
+                # Single-position lifecycle per series; only re-enter after flatten.
+                continue
+
             if kill.check().active:
                 metrics.record_reject()
                 audit.write({"series": series, "slug": market.slug, "blocked_reason": kill.check().reason})
@@ -389,9 +404,14 @@ def main() -> None:
             last_for_series = last_signal_ts.get(series, 0.0)
             if now_s - last_for_series < cfg.demo.signal_cooldown_sec:
                 continue
-            if traded_slug.get(series) == market.slug:
-                # Prevent repeated stacking in the same contract window.
+            last_flat = last_flat_ts.get(series, 0.0)
+            if now_s - last_flat < cfg.demo.signal_cooldown_sec:
                 continue
+            if not reentry_armed.get(series, True):
+                if abs(edge) <= Decimal(str(cfg.demo.exit_edge_bps)):
+                    reentry_armed[series] = True
+                else:
+                    continue
 
             intent = OrderIntent(
                 intent_id=str(uuid4()),
@@ -417,7 +437,7 @@ def main() -> None:
 
             fill = executor.submit(intent, yes_price)
             last_signal_ts[series] = now_s
-            traded_slug[series] = market.slug
+            reentry_armed[series] = False
             if fill.position_qty_after != 0 and symbol not in position_open_ts:
                 position_open_ts[symbol] = now_s
             elif fill.position_qty_after == 0:
