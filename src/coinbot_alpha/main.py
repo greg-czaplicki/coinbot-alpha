@@ -87,6 +87,10 @@ def main() -> None:
     position_open_ts: dict[str, float] = {}
     last_flat_ts: dict[str, float] = {}
     reentry_armed: dict[str, bool] = {}
+    equity_peak: Decimal | None = None
+    max_drawdown = Decimal("0")
+    drawdown_soft_block = False
+    drawdown_hard_triggered = False
 
     log.info(
         "alpha_latency_demo_start mode=%s binance_symbol=%s series_5m=%s series_15m=%s edge_bps=%s",
@@ -401,6 +405,10 @@ def main() -> None:
             if executor.has_open_position(symbol):
                 # Single-position lifecycle per series; only re-enter after flatten.
                 continue
+            if drawdown_soft_block:
+                metrics.record_reject()
+                audit.write({"series": series, "slug": market.slug, "blocked_reason": "max_drawdown_soft"})
+                continue
 
             if kill.check().active:
                 metrics.record_reject()
@@ -481,6 +489,65 @@ def main() -> None:
             yes_px = feed.latest_price() if feed is not None else None
             marks[f"btc_updown_{series}"] = yes_px if yes_px is not None else market.yes_price
         ledger = executor.snapshot(marks)
+        equity = ledger.realized_pnl_total + ledger.unrealized_pnl_total
+        if equity_peak is None or equity > equity_peak:
+            equity_peak = equity
+        drawdown = equity - equity_peak
+        if drawdown < max_drawdown:
+            max_drawdown = drawdown
+
+        soft_limit = Decimal(str(cfg.demo.max_drawdown_soft_usd))
+        hard_limit = Decimal(str(cfg.demo.max_drawdown_hard_usd))
+        drawdown_soft_block = soft_limit > 0 and drawdown <= -soft_limit
+        hard_breach = hard_limit > 0 and drawdown <= -hard_limit
+
+        if hard_breach and not drawdown_hard_triggered:
+            for series in sorted(tracked_snapshot.keys()):
+                symbol = f"btc_updown_{series}"
+                close_px = marks.get(symbol)
+                if close_px is None:
+                    continue
+                flatten_fill = executor.flatten_symbol(symbol, close_px)
+                if flatten_fill is None:
+                    continue
+                position_open_ts.pop(symbol, None)
+                last_flat_ts[series] = now_s
+                reentry_armed[series] = False
+                audit.write(
+                    {
+                        "intent_id": flatten_fill.intent_id,
+                        "series": series,
+                        "slug": tracked_snapshot[series].slug,
+                        "side": flatten_fill.side,
+                        "notional_usd": str(flatten_fill.notional_usd),
+                        "yes_price": str(close_px),
+                        "fill_price": str(flatten_fill.fill_price),
+                        "qty": str(flatten_fill.qty),
+                        "position_qty_after": str(flatten_fill.position_qty_after),
+                        "avg_entry_price_after": str(flatten_fill.avg_entry_price_after),
+                        "realized_pnl_delta": str(flatten_fill.realized_pnl_delta),
+                        "realized_pnl_total": str(flatten_fill.realized_pnl_total),
+                        "status": "flatten_drawdown_hard",
+                    }
+                )
+                log.info(
+                    "series_settle series=%s slug=%s reason=drawdown_hard px=%s realized_delta=%s",
+                    series,
+                    tracked_snapshot[series].slug,
+                    close_px,
+                    flatten_fill.realized_pnl_delta,
+                )
+            drawdown_hard_triggered = True
+            drawdown_soft_block = True
+            kill.activate("max_drawdown_hard")
+            ledger = executor.snapshot(marks)
+            equity = ledger.realized_pnl_total + ledger.unrealized_pnl_total
+            if equity_peak is None or equity > equity_peak:
+                equity_peak = equity
+            drawdown = equity - equity_peak
+            if drawdown < max_drawdown:
+                max_drawdown = drawdown
+
         alert_state = alerts.evaluate(snap)
         if alert_state.reject_spike_breach:
             kill.activate("reject_spike")
@@ -497,7 +564,7 @@ def main() -> None:
         edge_status = "; ".join(edge_status_parts) if edge_status_parts else "na"
 
         log.info(
-            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s pnl_realized=%s pnl_unrealized=%s open_positions=%s trades_total=%s fee_paid_total=%s entry_edge_bps=%s exit_edge_bps=%s reentry_arm_bps=%s edge_status=%s",
+            "telemetry_snapshot loops=%s submits=%s rejects=%s reject_rate=%.4f p95_submit_ms=%s kill_switch=%s tracked=%s pnl_realized=%s pnl_unrealized=%s equity=%s equity_peak=%s drawdown=%s max_drawdown=%s drawdown_soft_block=%s drawdown_hard_triggered=%s open_positions=%s trades_total=%s fee_paid_total=%s entry_edge_bps=%s exit_edge_bps=%s reentry_arm_bps=%s edge_status=%s",
             snap.loops,
             snap.submits,
             snap.rejects,
@@ -507,6 +574,12 @@ def main() -> None:
             sorted(tracked_snapshot.keys()),
             ledger.realized_pnl_total,
             ledger.unrealized_pnl_total,
+            equity,
+            equity_peak,
+            drawdown,
+            max_drawdown,
+            drawdown_soft_block,
+            drawdown_hard_triggered,
             ledger.open_positions,
             ledger.trades_total,
             ledger.fee_paid_total,

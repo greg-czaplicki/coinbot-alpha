@@ -52,6 +52,8 @@ class DemoConfig:
     reentry_arm_bps: int = 350
     max_hold_sec_5m: int = 180
     max_hold_sec_15m: int = 540
+    max_drawdown_soft_usd: float = 0.0
+    max_drawdown_hard_usd: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -112,6 +114,12 @@ def load_settings() -> Settings:
             reentry_arm_bps=int(os.getenv("DEMO_REENTRY_ARM_BPS", DemoConfig.reentry_arm_bps)),
             max_hold_sec_5m=int(os.getenv("DEMO_MAX_HOLD_SEC_5M", DemoConfig.max_hold_sec_5m)),
             max_hold_sec_15m=int(os.getenv("DEMO_MAX_HOLD_SEC_15M", DemoConfig.max_hold_sec_15m)),
+            max_drawdown_soft_usd=float(
+                os.getenv("DEMO_MAX_DRAWDOWN_SOFT_USD", DemoConfig.max_drawdown_soft_usd)
+            ),
+            max_drawdown_hard_usd=float(
+                os.getenv("DEMO_MAX_DRAWDOWN_HARD_USD", DemoConfig.max_drawdown_hard_usd)
+            ),
         ),
     )
     validate_settings(settings)
@@ -165,3 +173,13 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("DEMO_MAX_HOLD_SEC_5M must be > 0")
     if settings.demo.max_hold_sec_15m <= 0:
         raise ValueError("DEMO_MAX_HOLD_SEC_15M must be > 0")
+    if settings.demo.max_drawdown_soft_usd < 0:
+        raise ValueError("DEMO_MAX_DRAWDOWN_SOFT_USD must be >= 0")
+    if settings.demo.max_drawdown_hard_usd < 0:
+        raise ValueError("DEMO_MAX_DRAWDOWN_HARD_USD must be >= 0")
+    if (
+        settings.demo.max_drawdown_soft_usd > 0
+        and settings.demo.max_drawdown_hard_usd > 0
+        and settings.demo.max_drawdown_soft_usd > settings.demo.max_drawdown_hard_usd
+    ):
+        raise ValueError("DEMO_MAX_DRAWDOWN_SOFT_USD must be <= DEMO_MAX_DRAWDOWN_HARD_USD when both set")

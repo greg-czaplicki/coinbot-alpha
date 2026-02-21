@@ -43,6 +43,8 @@ python3 scripts/resolve_demo_seeds.py
 - `DEMO_REENTRY_ARM_BPS=350`
 - `DEMO_MAX_HOLD_SEC_5M=180`
 - `DEMO_MAX_HOLD_SEC_15M=540`
+- `DEMO_MAX_DRAWDOWN_SOFT_USD=0` (`>0` blocks new entries beyond drawdown)
+- `DEMO_MAX_DRAWDOWN_HARD_USD=0` (`>0` flattens and halts beyond drawdown)
 - `EXECUTION_FEE_BPS=0` (paper commission model per fill)
 
 ## Useful Logs
