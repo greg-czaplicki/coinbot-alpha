@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import inspect
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
@@ -10,6 +10,25 @@ from uuid import uuid4
 from coinbot_alpha.execution.paper import PaperExecutor, PaperFill, PaperLedgerSnapshot
 from coinbot_alpha.schemas import Side
 from coinbot_alpha.schemas import OrderIntent
+
+
+@dataclass(frozen=True)
+class LiveFillEvent:
+    order_id: str
+    symbol: str
+    side: str
+    fill_qty: Decimal
+    fill_price: Decimal
+    paper_fill: PaperFill
+
+
+@dataclass
+class _LiveOrderMeta:
+    symbol: str
+    side: Side
+    price: Decimal
+    submitted_qty: Decimal
+    filled_qty: Decimal = Decimal("0")
 
 
 class LiveExecutor:
@@ -49,6 +68,7 @@ class LiveExecutor:
         self._client: Any = None
         self._clob_types: dict[str, Any] = {}
         self._shadow_order_ids: set[str] = set()
+        self._live_orders: dict[str, _LiveOrderMeta] = {}
 
         self._log.info(
             "live_executor_init dry_run=%s clob_api_url=%s chain_id=%s signature_type=%s order_type=%s",
@@ -169,6 +189,12 @@ class LiveExecutor:
         order_id = self._extract_order_id(resp)
         if not order_id:
             raise RuntimeError(f"post_order succeeded but missing order id: {resp}")
+        self._live_orders[order_id] = _LiveOrderMeta(
+            symbol=symbol,
+            side=side,
+            price=px,
+            submitted_qty=qty,
+        )
         return order_id
 
     def cancel_order(self, order_id: str) -> bool:
@@ -202,6 +228,7 @@ class LiveExecutor:
         self._log.info("live_quote_cancel order_id=%s resp=%s", order_id, resp)
         if isinstance(resp, dict) and (resp.get("error") or resp.get("errorMsg")):
             raise RuntimeError(f"cancel rejected: {resp}")
+        self._live_orders.pop(order_id, None)
         return True
 
     def ack_order_filled(self, order_id: str) -> None:
@@ -209,6 +236,65 @@ class LiveExecutor:
             return
         if self._dry_run:
             self._shadow_order_ids.discard(order_id)
+            return
+        self._live_orders.pop(order_id, None)
+
+    def reconcile_live_fills(self) -> list[LiveFillEvent]:
+        if self._dry_run:
+            return []
+        if self._client is None:
+            self._init_client()
+
+        out: list[LiveFillEvent] = []
+        for order_id in list(self._live_orders.keys()):
+            meta = self._live_orders.get(order_id)
+            if meta is None:
+                continue
+
+            status_payload = self._fetch_order_status(order_id)
+            if status_payload is None:
+                continue
+
+            status = str(
+                status_payload.get("status")
+                or status_payload.get("orderStatus")
+                or status_payload.get("state")
+                or ""
+            ).lower()
+
+            filled_qty = self._extract_filled_qty(status_payload, meta.submitted_qty)
+            if filled_qty < meta.filled_qty:
+                filled_qty = meta.filled_qty
+            if filled_qty > meta.submitted_qty:
+                filled_qty = meta.submitted_qty
+
+            delta_qty = filled_qty - meta.filled_qty
+            if delta_qty > 0:
+                notional = delta_qty * meta.price
+                intent = OrderIntent(
+                    intent_id=f"live_fill_{uuid4()}",
+                    symbol=meta.symbol,
+                    side=meta.side,
+                    notional_usd=notional,
+                    slippage_bps=0,
+                )
+                paper_fill = self._paper.submit(intent, meta.price)
+                out.append(
+                    LiveFillEvent(
+                        order_id=order_id,
+                        symbol=meta.symbol,
+                        side=meta.side.value,
+                        fill_qty=delta_qty,
+                        fill_price=meta.price,
+                        paper_fill=paper_fill,
+                    )
+                )
+                meta.filled_qty = filled_qty
+
+            if status in {"matched", "filled", "cancelled", "canceled", "expired", "rejected"}:
+                self._live_orders.pop(order_id, None)
+
+        return out
 
     def _post_live_order_raw(
         self, intent: OrderIntent, token_id: str, limit_price: Decimal, qty: Decimal
@@ -266,6 +352,83 @@ class LiveExecutor:
                 if raw:
                     return str(raw)
         return None
+
+    def _fetch_order_status(self, order_id: str) -> dict[str, Any] | None:
+        getter = getattr(self._client, "get_order", None)
+        payload: Any = None
+        if getter is not None:
+            try:
+                payload = getter(order_id)
+            except TypeError:
+                payload = getter(order_id=order_id)
+            except Exception:  # noqa: BLE001
+                payload = None
+        if payload is None:
+            getter = getattr(self._client, "get_orders", None)
+            if getter is not None:
+                try:
+                    payload = getter([order_id])
+                except TypeError:
+                    try:
+                        payload = getter(order_ids=[order_id])
+                    except Exception:  # noqa: BLE001
+                        payload = None
+                except Exception:  # noqa: BLE001
+                    payload = None
+
+        if payload is None:
+            return None
+        if isinstance(payload, dict):
+            if "order" in payload and isinstance(payload["order"], dict):
+                return payload["order"]
+            if "orders" in payload and isinstance(payload["orders"], list):
+                for item in payload["orders"]:
+                    if isinstance(item, dict):
+                        item_id = str(item.get("id") or item.get("orderID") or item.get("orderId") or "")
+                        if item_id == order_id:
+                            return item
+                return None
+            return payload
+        if isinstance(payload, list):
+            for item in payload:
+                if isinstance(item, dict):
+                    item_id = str(item.get("id") or item.get("orderID") or item.get("orderId") or "")
+                    if item_id == order_id:
+                        return item
+        return None
+
+    def _extract_filled_qty(self, payload: dict[str, Any], submitted_qty: Decimal) -> Decimal:
+        candidates: list[Decimal] = []
+        for key in (
+            "filled",
+            "filled_size",
+            "size_filled",
+            "filledSize",
+            "sizeFilled",
+            "matchedSize",
+            "matched_size",
+            "executed",
+            "executed_size",
+            "takingAmount",
+            "makingAmount",
+        ):
+            raw = payload.get(key)
+            if raw in (None, ""):
+                continue
+            try:
+                val = Decimal(str(raw))
+            except Exception:  # noqa: BLE001
+                continue
+            if val < 0:
+                continue
+            candidates.append(val)
+        if not candidates:
+            return Decimal("0")
+
+        near_token = [x for x in candidates if x <= submitted_qty * Decimal("1.05")]
+        if near_token:
+            return max(near_token)
+        return min(max(candidates), submitted_qty)
 
     def _resolve_order_type(self) -> Any:
         order_type_enum = self._clob_types["OrderType"]

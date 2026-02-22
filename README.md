@@ -18,6 +18,7 @@ This is a **paper demo**, not production arb.
 - `EXECUTION_DRY_RUN=false`: posts signed live orders via `py-clob-client` (default order type `FOK`)
 - `DEMO_MAKER_ENABLED=true` + `EXECUTION_ORDER_TYPE=GTC`: enables maker quote post/cancel/requote loop
   - In dry-run maker mode, a shadow fill simulator marks fills when market price crosses quoted levels to estimate PnL.
+  - In live maker mode, a reconciliation pass ingests filled quantity deltas from live order status into telemetry/audit.
 
 ## Quick Start
 ```bash
@@ -73,6 +74,7 @@ python3 scripts/resolve_demo_seeds.py
 - `paper_submit ...` when a signal passes risk checks
 - `maker_quote_sync ...` when maker quotes are posted/requoted
 - `maker_shadow_fill ...` when a simulated maker fill is booked in dry-run mode
+- `live_fill_reconciled ...` when live fills are mirrored into local PnL tracking
 - `telemetry_snapshot ... pnl_realized=... pnl_unrealized=...` for paper PnL tracking
 
 ## Layout

@@ -774,6 +774,42 @@ def main() -> None:
                     "status": "submitted",
                 }
             )
+        if cfg.app.mode == "live" and not cfg.execution.dry_run and hasattr(executor, "reconcile_live_fills"):
+            try:
+                live_fills = executor.reconcile_live_fills()
+            except Exception as exc:  # noqa: BLE001
+                log.warning("live_fill_reconcile_error err=%s", exc)
+                live_fills = []
+            for event in live_fills:
+                series = event.symbol.split("_")[-1] if "_" in event.symbol else "unknown"
+                slug = tracked_snapshot.get(series).slug if series in tracked_snapshot else "unknown"
+                audit.write(
+                    {
+                        "intent_id": event.paper_fill.intent_id,
+                        "series": series,
+                        "slug": slug,
+                        "order_id": event.order_id,
+                        "symbol": event.symbol,
+                        "side": event.side,
+                        "fill_price": str(event.fill_price),
+                        "qty": str(event.fill_qty),
+                        "position_qty_after": str(event.paper_fill.position_qty_after),
+                        "avg_entry_price_after": str(event.paper_fill.avg_entry_price_after),
+                        "realized_pnl_delta": str(event.paper_fill.realized_pnl_delta),
+                        "realized_pnl_total": str(event.paper_fill.realized_pnl_total),
+                        "status": "live_fill_reconciled",
+                    }
+                )
+                log.info(
+                    "live_fill_reconciled order_id=%s symbol=%s side=%s qty=%s px=%s pos_qty_after=%s",
+                    event.order_id,
+                    event.symbol,
+                    event.side,
+                    event.fill_qty,
+                    event.fill_price,
+                    event.paper_fill.position_qty_after,
+                )
+
         snap = metrics.snapshot()
         marks = {}
         for series, market in tracked_snapshot.items():
