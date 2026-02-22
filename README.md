@@ -69,6 +69,7 @@ python3 scripts/resolve_demo_seeds.py
 - `DEMO_MAKER_MIN_PRICE=0.03`
 - `DEMO_MAKER_MAX_PRICE=0.97`
 - `DEMO_MAKER_MAX_ABS_POSITION_QTY=250` (caps one-sided inventory growth in maker mode)
+- `DEMO_MAKER_ONE_SIDED_BY_EDGE=true` (quotes only buy when edge>=0, only sell when edge<0)
 
 ## Useful Logs
 - `market_roll ...` when markets rotate

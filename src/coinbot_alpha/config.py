@@ -72,6 +72,7 @@ class DemoConfig:
     maker_min_price: float = 0.03
     maker_max_price: float = 0.97
     maker_max_abs_position_qty: float = 250.0
+    maker_one_sided_by_edge: bool = True
 
 
 @dataclass(frozen=True)
@@ -159,6 +160,10 @@ def load_settings() -> Settings:
             maker_max_price=float(os.getenv("DEMO_MAKER_MAX_PRICE", DemoConfig.maker_max_price)),
             maker_max_abs_position_qty=float(
                 os.getenv("DEMO_MAKER_MAX_ABS_POSITION_QTY", DemoConfig.maker_max_abs_position_qty)
+            ),
+            maker_one_sided_by_edge=_get_bool(
+                "DEMO_MAKER_ONE_SIDED_BY_EDGE",
+                DemoConfig.maker_one_sided_by_edge,
             ),
         ),
     )

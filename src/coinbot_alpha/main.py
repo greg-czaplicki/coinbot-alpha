@@ -485,6 +485,11 @@ def main() -> None:
                 pos_qty = executor.symbol_position_qty(symbol)
                 allow_buy_quote = pos_qty < max_abs_qty
                 allow_sell_quote = pos_qty > -max_abs_qty
+                if cfg.demo.maker_one_sided_by_edge:
+                    if edge >= 0:
+                        allow_sell_quote = False
+                    else:
+                        allow_buy_quote = False
                 try:
                     if allow_buy_quote:
                         _sync_maker_quote(
