@@ -331,6 +331,8 @@ def main() -> None:
             yes_price = yes_px if yes_px is not None else market.yes_price
             symbol = f"btc_updown_{series}"
             executor.bind_symbol(symbol, market.yes_token_id)
+            prev_yes_price = last_series_yes_price.get(series)
+            last_series_yes_price[series] = yes_price
 
             prev_slug = last_seen_slug.get(series)
             if prev_slug is not None and prev_slug != market.slug:
@@ -371,7 +373,6 @@ def main() -> None:
                 reentry_armed[series] = True
 
             last_seen_slug[series] = market.slug
-            last_series_yes_price[series] = yes_price
 
             model_strike = market.strike_price
             if model_strike is None and _is_updown_market(market):
@@ -476,9 +477,38 @@ def main() -> None:
                     )
 
                 quote_notional = Decimal(str(cfg.demo.maker_notional_usd))
+                max_abs_qty = Decimal(str(cfg.demo.maker_max_abs_position_qty))
+                pos_qty = executor.symbol_position_qty(symbol)
+                allow_buy_quote = pos_qty < max_abs_qty
+                allow_sell_quote = pos_qty > -max_abs_qty
                 try:
-                    _sync_maker_quote(symbol=symbol, side=Side.BUY, target_price=bid_px, quote_notional=quote_notional)
-                    _sync_maker_quote(symbol=symbol, side=Side.SELL, target_price=ask_px, quote_notional=quote_notional)
+                    if allow_buy_quote:
+                        _sync_maker_quote(
+                            symbol=symbol,
+                            side=Side.BUY,
+                            target_price=bid_px,
+                            quote_notional=quote_notional,
+                        )
+                    else:
+                        state = maker_states.setdefault(symbol, MakerQuoteState())
+                        if state.buy_order_id is not None:
+                            executor.cancel_order(state.buy_order_id)
+                            state.buy_order_id = None
+                            state.buy_price = None
+
+                    if allow_sell_quote:
+                        _sync_maker_quote(
+                            symbol=symbol,
+                            side=Side.SELL,
+                            target_price=ask_px,
+                            quote_notional=quote_notional,
+                        )
+                    else:
+                        state = maker_states.setdefault(symbol, MakerQuoteState())
+                        if state.sell_order_id is not None:
+                            executor.cancel_order(state.sell_order_id)
+                            state.sell_order_id = None
+                            state.sell_price = None
                 except Exception as exc:  # noqa: BLE001
                     log.warning("maker_quote_error symbol=%s series=%s err=%s", symbol, series, exc)
 
@@ -487,7 +517,13 @@ def main() -> None:
                 if cfg.execution.dry_run:
                     state = maker_states.get(symbol)
                     if state is not None:
-                        if state.buy_order_id is not None and state.buy_price is not None and yes_price <= state.buy_price:
+                        if (
+                            state.buy_order_id is not None
+                            and state.buy_price is not None
+                            and prev_yes_price is not None
+                            and prev_yes_price > state.buy_price
+                            and yes_price <= state.buy_price
+                        ):
                             filled_order_id = state.buy_order_id
                             _simulate_maker_shadow_fill(
                                 symbol=symbol,
@@ -501,7 +537,13 @@ def main() -> None:
                             state.buy_order_id = None
                             state.buy_price = None
 
-                        if state.sell_order_id is not None and state.sell_price is not None and yes_price >= state.sell_price:
+                        if (
+                            state.sell_order_id is not None
+                            and state.sell_price is not None
+                            and prev_yes_price is not None
+                            and prev_yes_price < state.sell_price
+                            and yes_price >= state.sell_price
+                        ):
                             filled_order_id = state.sell_order_id
                             _simulate_maker_shadow_fill(
                                 symbol=symbol,
@@ -732,7 +774,6 @@ def main() -> None:
                     "status": "submitted",
                 }
             )
-
         snap = metrics.snapshot()
         marks = {}
         for series, market in tracked_snapshot.items():

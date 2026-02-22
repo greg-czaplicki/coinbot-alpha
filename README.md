@@ -65,6 +65,7 @@ python3 scripts/resolve_demo_seeds.py
 - `DEMO_MAKER_REQUOTE_BPS=12`
 - `DEMO_MAKER_MIN_PRICE=0.03`
 - `DEMO_MAKER_MAX_PRICE=0.97`
+- `DEMO_MAKER_MAX_ABS_POSITION_QTY=250` (caps one-sided inventory growth in maker mode)
 
 ## Useful Logs
 - `market_roll ...` when markets rotate

@@ -126,6 +126,9 @@ class LiveExecutor:
     def symbol_unrealized(self, symbol: str, mark: Decimal) -> Decimal:
         return self._paper.symbol_unrealized(symbol, mark)
 
+    def symbol_position_qty(self, symbol: str) -> Decimal:
+        return self._paper.symbol_position_qty(symbol)
+
     def _post_live_order(self, intent: OrderIntent, token_id: str, limit_price: Decimal, qty: Decimal) -> None:
         _ = self._post_live_order_raw(intent=intent, token_id=token_id, limit_price=limit_price, qty=qty)
 

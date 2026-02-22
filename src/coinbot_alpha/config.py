@@ -69,6 +69,7 @@ class DemoConfig:
     maker_requote_bps: int = 12
     maker_min_price: float = 0.03
     maker_max_price: float = 0.97
+    maker_max_abs_position_qty: float = 250.0
 
 
 @dataclass(frozen=True)
@@ -152,6 +153,9 @@ def load_settings() -> Settings:
             maker_requote_bps=int(os.getenv("DEMO_MAKER_REQUOTE_BPS", DemoConfig.maker_requote_bps)),
             maker_min_price=float(os.getenv("DEMO_MAKER_MIN_PRICE", DemoConfig.maker_min_price)),
             maker_max_price=float(os.getenv("DEMO_MAKER_MAX_PRICE", DemoConfig.maker_max_price)),
+            maker_max_abs_position_qty=float(
+                os.getenv("DEMO_MAKER_MAX_ABS_POSITION_QTY", DemoConfig.maker_max_abs_position_qty)
+            ),
         ),
     )
     validate_settings(settings)
@@ -237,3 +241,5 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("DEMO_MAKER_MAX_PRICE must be in (0,1)")
     if settings.demo.maker_min_price >= settings.demo.maker_max_price:
         raise ValueError("DEMO_MAKER_MIN_PRICE must be < DEMO_MAKER_MAX_PRICE")
+    if settings.demo.maker_max_abs_position_qty <= 0:
+        raise ValueError("DEMO_MAKER_MAX_ABS_POSITION_QTY must be > 0")
