@@ -128,6 +128,7 @@ def main() -> None:
     maker_mode = cfg.app.mode == "live" and cfg.demo.maker_enabled and cfg.execution.order_type == "GTC"
     maker_states: dict[str, MakerQuoteState] = {}
     maker_side_cooldown_until: dict[tuple[str, str], float] = {}
+    maker_balance_pause_until = 0.0
 
     log.info(
         "alpha_latency_demo_start mode=%s maker_mode=%s binance_symbol=%s enable_5m=%s enable_15m=%s series_5m=%s series_15m=%s edge_bps=%s",
@@ -468,6 +469,9 @@ def main() -> None:
                 if kill.check().active or drawdown_soft_block:
                     _cancel_maker_quotes(symbol)
                     continue
+                if now_s < maker_balance_pause_until:
+                    _cancel_maker_quotes(symbol)
+                    continue
                 if cfg.demo.maker_notional_usd > cfg.risk.max_notional_per_symbol_usd:
                     log.warning(
                         "maker_disabled_for_symbol symbol=%s reason=notional_exceeds_risk_limit notional=%s risk_limit=%s",
@@ -546,6 +550,16 @@ def main() -> None:
                             state.sell_price = None
                 except Exception as exc:  # noqa: BLE001
                     log.warning("maker_quote_error symbol=%s series=%s err=%s", symbol, series, exc)
+                    err_text = str(exc).lower()
+                    if "not enough balance / allowance" in err_text:
+                        pause_s = float(cfg.demo.maker_balance_error_pause_sec)
+                        if pause_s > 0:
+                            maker_balance_pause_until = now_s + pause_s
+                            log.warning(
+                                "maker_balance_pause pause_sec=%s until_ts=%.3f reason=balance_or_allowance",
+                                pause_s,
+                                maker_balance_pause_until,
+                            )
 
                 # Shadow-only fill approximation: if market prints through our quote,
                 # count it as a fill at the quoted maker price.

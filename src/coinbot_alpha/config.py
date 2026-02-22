@@ -74,6 +74,7 @@ class DemoConfig:
     maker_max_abs_position_qty: float = 250.0
     maker_one_sided_by_edge: bool = True
     maker_repost_cooldown_sec: int = 20
+    maker_balance_error_pause_sec: int = 90
 
 
 @dataclass(frozen=True)
@@ -169,6 +170,12 @@ def load_settings() -> Settings:
             maker_repost_cooldown_sec=int(
                 os.getenv("DEMO_MAKER_REPOST_COOLDOWN_SEC", DemoConfig.maker_repost_cooldown_sec)
             ),
+            maker_balance_error_pause_sec=int(
+                os.getenv(
+                    "DEMO_MAKER_BALANCE_ERROR_PAUSE_SEC",
+                    DemoConfig.maker_balance_error_pause_sec,
+                )
+            ),
         ),
     )
     validate_settings(settings)
@@ -260,3 +267,5 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("DEMO_MAKER_MAX_ABS_POSITION_QTY must be > 0")
     if settings.demo.maker_repost_cooldown_sec < 0:
         raise ValueError("DEMO_MAKER_REPOST_COOLDOWN_SEC must be >= 0")
+    if settings.demo.maker_balance_error_pause_sec < 0:
+        raise ValueError("DEMO_MAKER_BALANCE_ERROR_PAUSE_SEC must be >= 0")
