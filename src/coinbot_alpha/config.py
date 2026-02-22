@@ -41,6 +41,8 @@ class ExecutionConfig:
 @dataclass(frozen=True)
 class DemoConfig:
     enabled: bool = True
+    enable_5m: bool = True
+    enable_15m: bool = True
     clob_api_url: str = "https://gamma-api.polymarket.com"
     clob_ws_url: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
     binance_symbol: str = "BTCUSDT"
@@ -119,6 +121,8 @@ def load_settings() -> Settings:
         ),
         demo=DemoConfig(
             enabled=_get_bool("DEMO_ENABLED", DemoConfig.enabled),
+            enable_5m=_get_bool("DEMO_ENABLE_5M", DemoConfig.enable_5m),
+            enable_15m=_get_bool("DEMO_ENABLE_15M", DemoConfig.enable_15m),
             clob_api_url=os.getenv("DEMO_CLOB_API_URL", DemoConfig.clob_api_url),
             clob_ws_url=os.getenv("DEMO_CLOB_WS_URL", DemoConfig.clob_ws_url),
             binance_symbol=os.getenv("DEMO_BINANCE_SYMBOL", DemoConfig.binance_symbol),
@@ -187,6 +191,8 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("POLYMARKET_PRIVATE_KEY must be set when APP_MODE=live and EXECUTION_DRY_RUN=false")
     if settings.demo.market_refresh_sec <= 0:
         raise ValueError("DEMO_MARKET_REFRESH_SEC must be > 0")
+    if not settings.demo.enable_5m and not settings.demo.enable_15m:
+        raise ValueError("At least one series must be enabled: DEMO_ENABLE_5M or DEMO_ENABLE_15M")
     if not settings.demo.clob_api_url:
         raise ValueError("DEMO_CLOB_API_URL must be set")
     if not settings.demo.clob_ws_url:

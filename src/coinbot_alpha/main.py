@@ -129,10 +129,12 @@ def main() -> None:
     maker_states: dict[str, MakerQuoteState] = {}
 
     log.info(
-        "alpha_latency_demo_start mode=%s maker_mode=%s binance_symbol=%s series_5m=%s series_15m=%s edge_bps=%s",
+        "alpha_latency_demo_start mode=%s maker_mode=%s binance_symbol=%s enable_5m=%s enable_15m=%s series_5m=%s series_15m=%s edge_bps=%s",
         cfg.app.mode,
         maker_mode,
         cfg.demo.binance_symbol,
+        cfg.demo.enable_5m,
+        cfg.demo.enable_15m,
         cfg.demo.series_5m_prefix,
         cfg.demo.series_15m_prefix,
         cfg.demo.edge_threshold_bps,
@@ -297,8 +299,10 @@ def main() -> None:
 
     def _resolver_loop() -> None:
         while True:
-            _refresh_market("5m", cfg.demo.seed_5m_slug)
-            _refresh_market("15m", cfg.demo.seed_15m_slug)
+            if cfg.demo.enable_5m:
+                _refresh_market("5m", cfg.demo.seed_5m_slug)
+            if cfg.demo.enable_15m:
+                _refresh_market("15m", cfg.demo.seed_15m_slug)
             time.sleep(cfg.demo.market_refresh_sec)
 
     thread = threading.Thread(target=_resolver_loop, name="market_resolver", daemon=True)

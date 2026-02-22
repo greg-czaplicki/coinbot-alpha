@@ -35,6 +35,8 @@ python3 scripts/resolve_demo_seeds.py
 
 ## Key Env Vars
 - `DEMO_CLOB_API_URL=https://gamma-api.polymarket.com`
+- `DEMO_ENABLE_5M=true`
+- `DEMO_ENABLE_15M=true` (set `false` to disable 15m quoting in small-account test mode)
 - `DEMO_CLOB_WS_URL=wss://ws-subscriptions-clob.polymarket.com/ws/market`
 - `DEMO_SERIES_5M_PREFIX=btc-updown-5m`
 - `DEMO_SERIES_15M_PREFIX=btc-updown-15m`
