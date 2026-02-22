@@ -3,7 +3,7 @@
 Research-first auto-trading framework (separate from copy-trading).
 
 ## Current Demo: BTC Latency-Divergence (5m/15m)
-- Pulls live BTC spot from Binance REST (`BTCUSDT`)
+- Pulls live BTC spot from Binance WebSocket (`BTCUSDT`) with REST fallback on stale/missing ticks
 - Auto-resolves active Polymarket BTC `5m` and `15m` rolling markets from Gamma API
 - Streams YES price updates from Polymarket CLOB websocket
 - Parses YES/NO (or UP/DOWN) prices + strike from market metadata when available
@@ -12,6 +12,10 @@ Research-first auto-trading framework (separate from copy-trading).
 - Enforces risk caps and writes trade audit logs
 
 This is a **paper demo**, not production arb.
+
+`APP_MODE=live` now uses a live-execution scaffold:
+- `EXECUTION_DRY_RUN=true`: shadow-live mode (uses live routing context with local fills/ledger)
+- `EXECUTION_DRY_RUN=false`: posts signed live orders via `py-clob-client` (default order type `FOK`)
 
 ## Quick Start
 ```bash
@@ -46,6 +50,13 @@ python3 scripts/resolve_demo_seeds.py
 - `DEMO_MAX_DRAWDOWN_SOFT_USD=0` (`>0` blocks new entries beyond drawdown)
 - `DEMO_MAX_DRAWDOWN_HARD_USD=0` (`>0` flattens and halts beyond drawdown)
 - `EXECUTION_FEE_BPS=0` (paper commission model per fill)
+- `EXECUTION_CLOB_API_URL=https://clob.polymarket.com`
+- `EXECUTION_ORDER_TYPE=FOK`
+- `POLYMARKET_PRIVATE_KEY=...` (required for `APP_MODE=live` and `EXECUTION_DRY_RUN=false`)
+- `POLYMARKET_CHAIN_ID=137`
+- `POLYMARKET_SIGNATURE_TYPE=0`
+- `POLYMARKET_FUNDER_ADDRESS=...` (optional; set if your account model needs it)
+- `POLYMARKET_API_KEY=...` / `POLYMARKET_API_SECRET=...` / `POLYMARKET_API_PASSPHRASE=...` (optional if API creds can be derived)
 
 ## Useful Logs
 - `market_roll ...` when markets rotate

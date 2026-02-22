@@ -11,6 +11,7 @@ from uuid import uuid4
 from coinbot_alpha.config import load_settings
 from coinbot_alpha.data.binance import BinanceSpotClient
 from coinbot_alpha.data.polymarket_clob import ActiveClobMarket, ClobSeriesResolver, ClobYesPriceFeed
+from coinbot_alpha.execution.live import LiveExecutor
 from coinbot_alpha.execution.paper import PaperExecutor
 from coinbot_alpha.risk.kill_switch import KillSwitch
 from coinbot_alpha.risk.limits import RiskEngine, RiskLimits
@@ -71,9 +72,25 @@ def main() -> None:
         )
     )
     kill = KillSwitch()
-    executor = PaperExecutor(cfg.execution.fee_bps)
+    if cfg.app.mode == "live":
+        executor = LiveExecutor(
+            fee_bps=cfg.execution.fee_bps,
+            dry_run=cfg.execution.dry_run,
+            clob_api_url=cfg.execution.clob_api_url,
+            private_key=cfg.execution.private_key,
+            chain_id=cfg.execution.chain_id,
+            signature_type=cfg.execution.signature_type,
+            funder=cfg.execution.funder,
+            api_key=cfg.execution.api_key,
+            api_secret=cfg.execution.api_secret,
+            api_passphrase=cfg.execution.api_passphrase,
+            order_type=cfg.execution.order_type,
+        )
+    else:
+        executor = PaperExecutor(cfg.execution.fee_bps)
 
     binance = BinanceSpotClient(cfg.demo.binance_symbol)
+    binance.start()
     resolver = ClobSeriesResolver(cfg.demo.clob_api_url)
 
     tracked: dict[str, ActiveClobMarket] = {}
@@ -164,6 +181,7 @@ def main() -> None:
             yes_px = feed.latest_price() if feed is not None else None
             yes_price = yes_px if yes_px is not None else market.yes_price
             symbol = f"btc_updown_{series}"
+            executor.bind_symbol(symbol, market.yes_token_id)
 
             prev_slug = last_seen_slug.get(series)
             if prev_slug is not None and prev_slug != market.slug:

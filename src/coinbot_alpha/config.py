@@ -27,6 +27,15 @@ class ExecutionConfig:
     dry_run: bool = True
     slippage_bps: int = 10
     fee_bps: int = 0
+    clob_api_url: str = "https://clob.polymarket.com"
+    private_key: str = ""
+    chain_id: int = 137
+    signature_type: int = 0
+    funder: str = ""
+    api_key: str = ""
+    api_secret: str = ""
+    api_passphrase: str = ""
+    order_type: str = "FOK"
 
 
 @dataclass(frozen=True)
@@ -91,6 +100,15 @@ def load_settings() -> Settings:
             dry_run=_get_bool("EXECUTION_DRY_RUN", ExecutionConfig.dry_run),
             slippage_bps=int(os.getenv("EXECUTION_SLIPPAGE_BPS", ExecutionConfig.slippage_bps)),
             fee_bps=int(os.getenv("EXECUTION_FEE_BPS", ExecutionConfig.fee_bps)),
+            clob_api_url=os.getenv("EXECUTION_CLOB_API_URL", ExecutionConfig.clob_api_url),
+            private_key=os.getenv("POLYMARKET_PRIVATE_KEY", ExecutionConfig.private_key),
+            chain_id=int(os.getenv("POLYMARKET_CHAIN_ID", ExecutionConfig.chain_id)),
+            signature_type=int(os.getenv("POLYMARKET_SIGNATURE_TYPE", ExecutionConfig.signature_type)),
+            funder=os.getenv("POLYMARKET_FUNDER_ADDRESS", ExecutionConfig.funder),
+            api_key=os.getenv("POLYMARKET_API_KEY", ExecutionConfig.api_key),
+            api_secret=os.getenv("POLYMARKET_API_SECRET", ExecutionConfig.api_secret),
+            api_passphrase=os.getenv("POLYMARKET_API_PASSPHRASE", ExecutionConfig.api_passphrase),
+            order_type=os.getenv("EXECUTION_ORDER_TYPE", ExecutionConfig.order_type).upper(),
         ),
         demo=DemoConfig(
             enabled=_get_bool("DEMO_ENABLED", DemoConfig.enabled),
@@ -139,6 +157,16 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("EXECUTION_SLIPPAGE_BPS must be >= 0")
     if settings.execution.fee_bps < 0:
         raise ValueError("EXECUTION_FEE_BPS must be >= 0")
+    if not settings.execution.clob_api_url:
+        raise ValueError("EXECUTION_CLOB_API_URL must be set")
+    if settings.execution.chain_id <= 0:
+        raise ValueError("POLYMARKET_CHAIN_ID must be > 0")
+    if settings.execution.signature_type not in {0, 1, 2}:
+        raise ValueError("POLYMARKET_SIGNATURE_TYPE must be one of 0|1|2")
+    if settings.execution.order_type not in {"FOK", "GTC", "GTD"}:
+        raise ValueError("EXECUTION_ORDER_TYPE must be one of FOK|GTC|GTD")
+    if settings.app.mode == "live" and not settings.execution.dry_run and not settings.execution.private_key:
+        raise ValueError("POLYMARKET_PRIVATE_KEY must be set when APP_MODE=live and EXECUTION_DRY_RUN=false")
     if settings.demo.market_refresh_sec <= 0:
         raise ValueError("DEMO_MARKET_REFRESH_SEC must be > 0")
     if not settings.demo.clob_api_url:

@@ -109,6 +109,10 @@ class PaperExecutor:
             status="filled",
         )
 
+    def bind_symbol(self, symbol: str, token_id: str) -> None:
+        _ = symbol
+        _ = token_id
+
     def snapshot(self, marks: dict[str, Decimal] | None = None) -> PaperLedgerSnapshot:
         if marks:
             self._marks.update(marks)
@@ -192,6 +196,9 @@ class PaperExecutor:
 
     def has_open_position(self, symbol: str) -> bool:
         return self._position_qty.get(symbol, Decimal("0")) != 0
+
+    def symbol_position_qty(self, symbol: str) -> Decimal:
+        return self._position_qty.get(symbol, Decimal("0"))
 
     def symbol_unrealized(self, symbol: str, mark: Decimal) -> Decimal:
         qty = self._position_qty.get(symbol, Decimal("0"))
