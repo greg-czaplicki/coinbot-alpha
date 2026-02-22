@@ -73,6 +73,7 @@ class DemoConfig:
     maker_max_price: float = 0.97
     maker_max_abs_position_qty: float = 250.0
     maker_one_sided_by_edge: bool = True
+    maker_repost_cooldown_sec: int = 20
 
 
 @dataclass(frozen=True)
@@ -165,6 +166,9 @@ def load_settings() -> Settings:
                 "DEMO_MAKER_ONE_SIDED_BY_EDGE",
                 DemoConfig.maker_one_sided_by_edge,
             ),
+            maker_repost_cooldown_sec=int(
+                os.getenv("DEMO_MAKER_REPOST_COOLDOWN_SEC", DemoConfig.maker_repost_cooldown_sec)
+            ),
         ),
     )
     validate_settings(settings)
@@ -254,3 +258,5 @@ def validate_settings(settings: Settings) -> None:
         raise ValueError("DEMO_MAKER_MIN_PRICE must be < DEMO_MAKER_MAX_PRICE")
     if settings.demo.maker_max_abs_position_qty <= 0:
         raise ValueError("DEMO_MAKER_MAX_ABS_POSITION_QTY must be > 0")
+    if settings.demo.maker_repost_cooldown_sec < 0:
+        raise ValueError("DEMO_MAKER_REPOST_COOLDOWN_SEC must be >= 0")

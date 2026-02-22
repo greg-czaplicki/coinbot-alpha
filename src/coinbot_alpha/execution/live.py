@@ -228,6 +228,18 @@ class LiveExecutor:
         self._log.info("live_quote_cancel order_id=%s resp=%s", order_id, resp)
         if isinstance(resp, dict) and (resp.get("error") or resp.get("errorMsg")):
             raise RuntimeError(f"cancel rejected: {resp}")
+        if isinstance(resp, dict):
+            not_canceled = resp.get("not_canceled")
+            if isinstance(not_canceled, dict):
+                reason = str(not_canceled.get(order_id) or "").lower()
+                if reason:
+                    self._live_orders.pop(order_id, None)
+                    if "matched" in reason or "filled" in reason or "can't be found" in reason:
+                        return False
+            canceled = resp.get("canceled")
+            if isinstance(canceled, list) and order_id in canceled:
+                self._live_orders.pop(order_id, None)
+                return True
         self._live_orders.pop(order_id, None)
         return True
 

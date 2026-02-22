@@ -127,6 +127,7 @@ def main() -> None:
     drawdown_hard_triggered = False
     maker_mode = cfg.app.mode == "live" and cfg.demo.maker_enabled and cfg.execution.order_type == "GTC"
     maker_states: dict[str, MakerQuoteState] = {}
+    maker_side_cooldown_until: dict[tuple[str, str], float] = {}
 
     log.info(
         "alpha_latency_demo_start mode=%s maker_mode=%s binance_symbol=%s enable_5m=%s enable_15m=%s series_5m=%s series_15m=%s edge_bps=%s",
@@ -157,6 +158,10 @@ def main() -> None:
 
     def _sync_maker_quote(symbol: str, side: Side, target_price: Decimal, quote_notional: Decimal) -> None:
         state = maker_states.setdefault(symbol, MakerQuoteState())
+        cooldown_key = (symbol, side.value)
+        cooldown_until = maker_side_cooldown_until.get(cooldown_key, 0.0)
+        if now_s < cooldown_until:
+            return
         order_id = state.buy_order_id if side == Side.BUY else state.sell_order_id
         old_price = state.buy_price if side == Side.BUY else state.sell_price
         requote_bps = Decimal(str(cfg.demo.maker_requote_bps))
@@ -170,7 +175,24 @@ def main() -> None:
 
         if order_id is not None:
             try:
-                executor.cancel_order(order_id)
+                canceled = executor.cancel_order(order_id)
+                if not canceled:
+                    if side == Side.BUY:
+                        state.buy_order_id = None
+                        state.buy_price = None
+                    else:
+                        state.sell_order_id = None
+                        state.sell_price = None
+                    cooldown_s = float(cfg.demo.maker_repost_cooldown_sec)
+                    if cooldown_s > 0:
+                        maker_side_cooldown_until[cooldown_key] = now_s + cooldown_s
+                        log.info(
+                            "maker_side_cooldown symbol=%s side=%s cooldown_sec=%s reason=matched_or_gone",
+                            symbol,
+                            side.value,
+                            cooldown_s,
+                        )
+                    return
             except Exception as exc:  # noqa: BLE001
                 log.warning(
                     "maker_cancel_error symbol=%s side=%s order_id=%s err=%s",
@@ -179,6 +201,10 @@ def main() -> None:
                     order_id,
                     exc,
                 )
+                cooldown_s = float(cfg.demo.maker_repost_cooldown_sec)
+                if cooldown_s > 0:
+                    maker_side_cooldown_until[cooldown_key] = now_s + cooldown_s
+                return
 
         new_order_id = executor.place_limit_order(
             symbol=symbol,
