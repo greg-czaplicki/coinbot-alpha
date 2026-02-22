@@ -16,6 +16,7 @@ This is a **paper demo**, not production arb.
 `APP_MODE=live` now uses a live-execution scaffold:
 - `EXECUTION_DRY_RUN=true`: shadow-live mode (uses live routing context with local fills/ledger)
 - `EXECUTION_DRY_RUN=false`: posts signed live orders via `py-clob-client` (default order type `FOK`)
+- `DEMO_MAKER_ENABLED=true` + `EXECUTION_ORDER_TYPE=GTC`: enables maker quote post/cancel/requote loop
 
 ## Quick Start
 ```bash
@@ -57,6 +58,12 @@ python3 scripts/resolve_demo_seeds.py
 - `POLYMARKET_SIGNATURE_TYPE=0`
 - `POLYMARKET_FUNDER_ADDRESS=...` (optional; set if your account model needs it)
 - `POLYMARKET_API_KEY=...` / `POLYMARKET_API_SECRET=...` / `POLYMARKET_API_PASSPHRASE=...` (optional if API creds can be derived)
+- `DEMO_MAKER_ENABLED=false`
+- `DEMO_MAKER_NOTIONAL_USD=25`
+- `DEMO_MAKER_HALF_SPREAD_BPS=40`
+- `DEMO_MAKER_REQUOTE_BPS=12`
+- `DEMO_MAKER_MIN_PRICE=0.03`
+- `DEMO_MAKER_MAX_PRICE=0.97`
 
 ## Useful Logs
 - `market_roll ...` when markets rotate

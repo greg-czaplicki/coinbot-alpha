@@ -4,6 +4,7 @@ import logging
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any
+from uuid import uuid4
 
 from coinbot_alpha.execution.paper import PaperExecutor, PaperFill, PaperLedgerSnapshot
 from coinbot_alpha.schemas import Side
@@ -46,6 +47,7 @@ class LiveExecutor:
         self._symbol_to_token: dict[str, str] = {}
         self._client: Any = None
         self._clob_types: dict[str, Any] = {}
+        self._shadow_order_ids: set[str] = set()
 
         self._log.info(
             "live_executor_init dry_run=%s clob_api_url=%s chain_id=%s signature_type=%s order_type=%s",
@@ -125,6 +127,82 @@ class LiveExecutor:
         return self._paper.symbol_unrealized(symbol, mark)
 
     def _post_live_order(self, intent: OrderIntent, token_id: str, limit_price: Decimal, qty: Decimal) -> None:
+        _ = self._post_live_order_raw(intent=intent, token_id=token_id, limit_price=limit_price, qty=qty)
+
+    def place_limit_order(self, symbol: str, side: Side, price: Decimal, notional_usd: Decimal) -> str:
+        token_id = self._symbol_to_token.get(symbol)
+        if not token_id:
+            raise RuntimeError(f"Missing token binding for symbol={symbol}")
+
+        px = max(price, Decimal("0.0001"))
+        qty = notional_usd / px
+        if qty <= 0:
+            raise RuntimeError(f"Quote qty must be > 0 (symbol={symbol}, notional={notional_usd}, px={px})")
+
+        if self._dry_run:
+            order_id = f"shadow-{uuid4()}"
+            self._shadow_order_ids.add(order_id)
+            self._log.info(
+                "live_quote_post_shadow order_id=%s symbol=%s token_id=%s side=%s notional=%s qty=%s px=%s",
+                order_id,
+                symbol,
+                token_id,
+                side.value,
+                notional_usd,
+                qty,
+                px,
+            )
+            return order_id
+
+        intent = OrderIntent(
+            intent_id=f"maker_quote_{uuid4()}",
+            symbol=symbol,
+            side=side,
+            notional_usd=notional_usd,
+            slippage_bps=0,
+        )
+        resp = self._post_live_order_raw(intent=intent, token_id=token_id, limit_price=px, qty=qty)
+        order_id = self._extract_order_id(resp)
+        if not order_id:
+            raise RuntimeError(f"post_order succeeded but missing order id: {resp}")
+        return order_id
+
+    def cancel_order(self, order_id: str) -> bool:
+        if not order_id:
+            return False
+        if self._dry_run:
+            existed = order_id in self._shadow_order_ids
+            self._shadow_order_ids.discard(order_id)
+            self._log.info("live_quote_cancel_shadow order_id=%s existed=%s", order_id, existed)
+            return existed
+
+        if self._client is None:
+            self._init_client()
+
+        cancel_fn = getattr(self._client, "cancel", None)
+        resp: Any = None
+        if cancel_fn is not None:
+            try:
+                resp = cancel_fn(order_id)
+            except TypeError:
+                resp = cancel_fn(order_id=order_id)
+        elif hasattr(self._client, "cancel_order"):
+            cancel_order_fn = getattr(self._client, "cancel_order")
+            resp = cancel_order_fn(order_id)
+        elif hasattr(self._client, "cancel_orders"):
+            cancel_orders_fn = getattr(self._client, "cancel_orders")
+            resp = cancel_orders_fn([order_id])
+        else:
+            raise RuntimeError("py-clob-client missing cancel method")
+
+        self._log.info("live_quote_cancel order_id=%s resp=%s", order_id, resp)
+        if isinstance(resp, dict) and (resp.get("error") or resp.get("errorMsg")):
+            raise RuntimeError(f"cancel rejected: {resp}")
+        return True
+
+    def _post_live_order_raw(
+        self, intent: OrderIntent, token_id: str, limit_price: Decimal, qty: Decimal
+    ) -> dict[str, Any] | Any:
         if self._client is None:
             self._init_client()
 
@@ -154,6 +232,7 @@ class LiveExecutor:
             self._order_type,
             resp,
         )
+        return resp
 
     def _validate_post_response(self, resp: Any) -> None:
         if not isinstance(resp, dict):
@@ -162,6 +241,21 @@ class LiveExecutor:
             raise RuntimeError(f"post_order rejected: {resp}")
         if ("success" in resp) and (resp.get("success") is False):
             raise RuntimeError(f"post_order unsuccessful: {resp}")
+
+    def _extract_order_id(self, resp: Any) -> str | None:
+        if not isinstance(resp, dict):
+            return None
+        for key in ("orderID", "orderId", "id"):
+            raw = resp.get(key)
+            if raw:
+                return str(raw)
+        order = resp.get("order")
+        if isinstance(order, dict):
+            for key in ("orderID", "orderId", "id"):
+                raw = order.get(key)
+                if raw:
+                    return str(raw)
+        return None
 
     def _resolve_order_type(self) -> Any:
         order_type_enum = self._clob_types["OrderType"]

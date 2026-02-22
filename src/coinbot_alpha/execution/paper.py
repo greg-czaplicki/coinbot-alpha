@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
+from uuid import uuid4
 
 from coinbot_alpha.schemas import OrderIntent
 
@@ -112,6 +113,17 @@ class PaperExecutor:
     def bind_symbol(self, symbol: str, token_id: str) -> None:
         _ = symbol
         _ = token_id
+
+    def place_limit_order(self, symbol: str, side, price: Decimal, notional_usd: Decimal) -> str:
+        _ = symbol
+        _ = side
+        _ = price
+        _ = notional_usd
+        return f"paper-quote-{uuid4()}"
+
+    def cancel_order(self, order_id: str) -> bool:
+        _ = order_id
+        return True
 
     def snapshot(self, marks: dict[str, Decimal] | None = None) -> PaperLedgerSnapshot:
         if marks:

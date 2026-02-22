@@ -63,6 +63,12 @@ class DemoConfig:
     max_hold_sec_15m: int = 540
     max_drawdown_soft_usd: float = 0.0
     max_drawdown_hard_usd: float = 0.0
+    maker_enabled: bool = False
+    maker_notional_usd: float = 25.0
+    maker_half_spread_bps: int = 40
+    maker_requote_bps: int = 12
+    maker_min_price: float = 0.03
+    maker_max_price: float = 0.97
 
 
 @dataclass(frozen=True)
@@ -138,6 +144,14 @@ def load_settings() -> Settings:
             max_drawdown_hard_usd=float(
                 os.getenv("DEMO_MAX_DRAWDOWN_HARD_USD", DemoConfig.max_drawdown_hard_usd)
             ),
+            maker_enabled=_get_bool("DEMO_MAKER_ENABLED", DemoConfig.maker_enabled),
+            maker_notional_usd=float(os.getenv("DEMO_MAKER_NOTIONAL_USD", DemoConfig.maker_notional_usd)),
+            maker_half_spread_bps=int(
+                os.getenv("DEMO_MAKER_HALF_SPREAD_BPS", DemoConfig.maker_half_spread_bps)
+            ),
+            maker_requote_bps=int(os.getenv("DEMO_MAKER_REQUOTE_BPS", DemoConfig.maker_requote_bps)),
+            maker_min_price=float(os.getenv("DEMO_MAKER_MIN_PRICE", DemoConfig.maker_min_price)),
+            maker_max_price=float(os.getenv("DEMO_MAKER_MAX_PRICE", DemoConfig.maker_max_price)),
         ),
     )
     validate_settings(settings)
@@ -211,3 +225,15 @@ def validate_settings(settings: Settings) -> None:
         and settings.demo.max_drawdown_soft_usd > settings.demo.max_drawdown_hard_usd
     ):
         raise ValueError("DEMO_MAX_DRAWDOWN_SOFT_USD must be <= DEMO_MAX_DRAWDOWN_HARD_USD when both set")
+    if settings.demo.maker_notional_usd <= 0:
+        raise ValueError("DEMO_MAKER_NOTIONAL_USD must be > 0")
+    if settings.demo.maker_half_spread_bps <= 0:
+        raise ValueError("DEMO_MAKER_HALF_SPREAD_BPS must be > 0")
+    if settings.demo.maker_requote_bps <= 0:
+        raise ValueError("DEMO_MAKER_REQUOTE_BPS must be > 0")
+    if settings.demo.maker_min_price <= 0 or settings.demo.maker_min_price >= 1:
+        raise ValueError("DEMO_MAKER_MIN_PRICE must be in (0,1)")
+    if settings.demo.maker_max_price <= 0 or settings.demo.maker_max_price >= 1:
+        raise ValueError("DEMO_MAKER_MAX_PRICE must be in (0,1)")
+    if settings.demo.maker_min_price >= settings.demo.maker_max_price:
+        raise ValueError("DEMO_MAKER_MIN_PRICE must be < DEMO_MAKER_MAX_PRICE")

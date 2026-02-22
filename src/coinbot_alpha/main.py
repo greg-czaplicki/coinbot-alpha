@@ -4,6 +4,7 @@ import logging
 import math
 import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -54,6 +55,22 @@ def _is_updown_market(market: ActiveClobMarket) -> bool:
     slug = market.slug.lower()
     q = market.question.lower()
     return "updown" in slug or "up or down" in q
+
+
+@dataclass
+class MakerQuoteState:
+    buy_order_id: str | None = None
+    sell_order_id: str | None = None
+    buy_price: Decimal | None = None
+    sell_price: Decimal | None = None
+
+
+def _clamp_decimal(value: Decimal, low: Decimal, high: Decimal) -> Decimal:
+    return max(low, min(high, value))
+
+
+def _quote_price(raw_price: Decimal) -> Decimal:
+    return raw_price.quantize(Decimal("0.001"))
 
 
 def main() -> None:
@@ -108,15 +125,79 @@ def main() -> None:
     max_drawdown = Decimal("0")
     drawdown_soft_block = False
     drawdown_hard_triggered = False
+    maker_mode = cfg.app.mode == "live" and cfg.demo.maker_enabled and cfg.execution.order_type == "GTC"
+    maker_states: dict[str, MakerQuoteState] = {}
 
     log.info(
-        "alpha_latency_demo_start mode=%s binance_symbol=%s series_5m=%s series_15m=%s edge_bps=%s",
+        "alpha_latency_demo_start mode=%s maker_mode=%s binance_symbol=%s series_5m=%s series_15m=%s edge_bps=%s",
         cfg.app.mode,
+        maker_mode,
         cfg.demo.binance_symbol,
         cfg.demo.series_5m_prefix,
         cfg.demo.series_15m_prefix,
         cfg.demo.edge_threshold_bps,
     )
+
+    def _cancel_maker_quotes(symbol: str) -> None:
+        if not maker_mode:
+            return
+        state = maker_states.get(symbol)
+        if state is None:
+            return
+        for order_id in (state.buy_order_id, state.sell_order_id):
+            if not order_id:
+                continue
+            try:
+                executor.cancel_order(order_id)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("maker_cancel_error symbol=%s order_id=%s err=%s", symbol, order_id, exc)
+        maker_states[symbol] = MakerQuoteState()
+
+    def _sync_maker_quote(symbol: str, side: Side, target_price: Decimal, quote_notional: Decimal) -> None:
+        state = maker_states.setdefault(symbol, MakerQuoteState())
+        order_id = state.buy_order_id if side == Side.BUY else state.sell_order_id
+        old_price = state.buy_price if side == Side.BUY else state.sell_price
+        requote_bps = Decimal(str(cfg.demo.maker_requote_bps))
+        should_requote = (
+            order_id is None
+            or old_price is None
+            or abs((target_price - old_price) * Decimal("10000")) >= requote_bps
+        )
+        if not should_requote:
+            return
+
+        if order_id is not None:
+            try:
+                executor.cancel_order(order_id)
+            except Exception as exc:  # noqa: BLE001
+                log.warning(
+                    "maker_cancel_error symbol=%s side=%s order_id=%s err=%s",
+                    symbol,
+                    side.value,
+                    order_id,
+                    exc,
+                )
+
+        new_order_id = executor.place_limit_order(
+            symbol=symbol,
+            side=side,
+            price=target_price,
+            notional_usd=quote_notional,
+        )
+        if side == Side.BUY:
+            state.buy_order_id = new_order_id
+            state.buy_price = target_price
+        else:
+            state.sell_order_id = new_order_id
+            state.sell_price = target_price
+        log.info(
+            "maker_quote_sync symbol=%s side=%s order_id=%s price=%s notional=%s",
+            symbol,
+            side.value,
+            new_order_id,
+            target_price,
+            quote_notional,
+        )
 
     def _refresh_market(series: str, seed_slug: str) -> None:
         try:
@@ -185,6 +266,7 @@ def main() -> None:
 
             prev_slug = last_seen_slug.get(series)
             if prev_slug is not None and prev_slug != market.slug:
+                _cancel_maker_quotes(symbol)
                 close_px = last_series_yes_price.get(series, yes_price)
                 flatten_fill = executor.flatten_symbol(symbol, close_px)
                 if flatten_fill is not None:
@@ -244,6 +326,7 @@ def main() -> None:
 
             model_p = _model_prob_up(spot, model_strike, tte_s, cfg.demo.model_sigma_annual)
             if tte_s <= 0 and market.slug not in settled_slug:
+                _cancel_maker_quotes(symbol)
                 flatten_fill = executor.flatten_symbol(symbol, yes_price)
                 settled_slug.add(market.slug)
                 if flatten_fill is not None:
@@ -282,6 +365,56 @@ def main() -> None:
             edge = _edge_bps(model_p, yes_price)
             edge_snapshot[series] = edge
             entry_distance_snapshot[series] = Decimal(str(cfg.demo.edge_threshold_bps)) - abs(edge)
+            if maker_mode:
+                if kill.check().active or drawdown_soft_block:
+                    _cancel_maker_quotes(symbol)
+                    continue
+                if cfg.demo.maker_notional_usd > cfg.risk.max_notional_per_symbol_usd:
+                    log.warning(
+                        "maker_disabled_for_symbol symbol=%s reason=notional_exceeds_risk_limit notional=%s risk_limit=%s",
+                        symbol,
+                        cfg.demo.maker_notional_usd,
+                        cfg.risk.max_notional_per_symbol_usd,
+                    )
+                    _cancel_maker_quotes(symbol)
+                    continue
+
+                fair_yes = _clamp_decimal(
+                    model_p,
+                    Decimal(str(cfg.demo.maker_min_price)),
+                    Decimal(str(cfg.demo.maker_max_price)),
+                )
+                half_spread = Decimal(str(cfg.demo.maker_half_spread_bps)) / Decimal("10000")
+                bid_px = _quote_price(
+                    _clamp_decimal(
+                        fair_yes - half_spread,
+                        Decimal(str(cfg.demo.maker_min_price)),
+                        Decimal(str(cfg.demo.maker_max_price)),
+                    )
+                )
+                ask_px = _quote_price(
+                    _clamp_decimal(
+                        fair_yes + half_spread,
+                        Decimal(str(cfg.demo.maker_min_price)),
+                        Decimal(str(cfg.demo.maker_max_price)),
+                    )
+                )
+                if ask_px <= bid_px:
+                    ask_px = bid_px + Decimal("0.001")
+                    ask_px = _clamp_decimal(
+                        ask_px,
+                        Decimal(str(cfg.demo.maker_min_price)),
+                        Decimal(str(cfg.demo.maker_max_price)),
+                    )
+
+                quote_notional = Decimal(str(cfg.demo.maker_notional_usd))
+                try:
+                    _sync_maker_quote(symbol=symbol, side=Side.BUY, target_price=bid_px, quote_notional=quote_notional)
+                    _sync_maker_quote(symbol=symbol, side=Side.SELL, target_price=ask_px, quote_notional=quote_notional)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("maker_quote_error symbol=%s series=%s err=%s", symbol, series, exc)
+                continue
+
             min_hold_sec = cfg.demo.min_hold_sec_5m if series == "5m" else cfg.demo.min_hold_sec_15m
             max_hold_sec = cfg.demo.max_hold_sec_5m if series == "5m" else cfg.demo.max_hold_sec_15m
             if executor.has_open_position(symbol):
@@ -522,6 +655,7 @@ def main() -> None:
         if hard_breach and not drawdown_hard_triggered:
             for series in sorted(tracked_snapshot.keys()):
                 symbol = f"btc_updown_{series}"
+                _cancel_maker_quotes(symbol)
                 close_px = marks.get(symbol)
                 if close_px is None:
                     continue
