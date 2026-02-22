@@ -242,59 +242,12 @@ class LiveExecutor:
     def reconcile_live_fills(self) -> list[LiveFillEvent]:
         if self._dry_run:
             return []
-        if self._client is None:
-            self._init_client()
 
-        out: list[LiveFillEvent] = []
-        for order_id in list(self._live_orders.keys()):
-            meta = self._live_orders.get(order_id)
-            if meta is None:
-                continue
-
-            status_payload = self._fetch_order_status(order_id)
-            if status_payload is None:
-                continue
-
-            status = str(
-                status_payload.get("status")
-                or status_payload.get("orderStatus")
-                or status_payload.get("state")
-                or ""
-            ).lower()
-
-            filled_qty = self._extract_filled_qty(status_payload, meta.submitted_qty)
-            if filled_qty < meta.filled_qty:
-                filled_qty = meta.filled_qty
-            if filled_qty > meta.submitted_qty:
-                filled_qty = meta.submitted_qty
-
-            delta_qty = filled_qty - meta.filled_qty
-            if delta_qty > 0:
-                notional = delta_qty * meta.price
-                intent = OrderIntent(
-                    intent_id=f"live_fill_{uuid4()}",
-                    symbol=meta.symbol,
-                    side=meta.side,
-                    notional_usd=notional,
-                    slippage_bps=0,
-                )
-                paper_fill = self._paper.submit(intent, meta.price)
-                out.append(
-                    LiveFillEvent(
-                        order_id=order_id,
-                        symbol=meta.symbol,
-                        side=meta.side.value,
-                        fill_qty=delta_qty,
-                        fill_price=meta.price,
-                        paper_fill=paper_fill,
-                    )
-                )
-                meta.filled_qty = filled_qty
-
-            if status in {"matched", "filled", "cancelled", "canceled", "expired", "rejected"}:
-                self._live_orders.pop(order_id, None)
-
-        return out
+        # Disabled for now: /data/order auth behavior is inconsistent across
+        # runtime environments for some API key models. Keep live execution
+        # stable and avoid noisy polling until websocket/user-fill
+        # reconciliation is added.
+        return []
 
     def _post_live_order_raw(
         self, intent: OrderIntent, token_id: str, limit_price: Decimal, qty: Decimal
