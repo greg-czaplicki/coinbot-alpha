@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import inspect
 from dataclasses import replace
 from decimal import Decimal
 from typing import Any
@@ -280,7 +281,7 @@ class LiveExecutor:
 
         try:
             from py_clob_client.client import ClobClient
-            from py_clob_client.clob_types import ApiCreds, OrderArgs, OrderType
+            from py_clob_client.clob_types import OrderArgs, OrderType
             from py_clob_client.order_builder.constants import BUY, SELL
         except ModuleNotFoundError as exc:  # pragma: no cover
             raise RuntimeError(
@@ -295,27 +296,52 @@ class LiveExecutor:
             funder=self._funder,
         )
         self._clob_types = {
-            "ApiCreds": ApiCreds,
             "OrderArgs": OrderArgs,
             "OrderType": OrderType,
             "BUY": BUY,
             "SELL": SELL,
         }
-
-        creds = self._get_or_create_api_creds(client, ApiCreds)
-        client.set_api_creds(creds)
+        self._set_or_derive_api_creds(client)
         self._client = client
 
-    def _get_or_create_api_creds(self, client: Any, api_creds_type: Any) -> Any:
-        if self._api_key and self._api_secret and self._api_passphrase:
-            return api_creds_type(
-                api_key=self._api_key,
-                api_secret=self._api_secret,
-                api_passphrase=self._api_passphrase,
-            )
+    def _set_or_derive_api_creds(self, client: Any) -> None:
+        setter = getattr(client, "set_api_creds", None)
+        if setter is None:
+            raise RuntimeError("py-clob-client missing set_api_creds")
 
-        if hasattr(client, "create_or_derive_api_creds"):
-            return client.create_or_derive_api_creds()
-        raise RuntimeError(
-            "No API creds provided and client cannot derive creds. Set POLYMARKET_API_KEY/SECRET/PASSPHRASE."
-        )
+        if self._api_key and self._api_secret and self._api_passphrase:
+            try:
+                param_count = len(inspect.signature(setter).parameters)
+            except Exception:  # noqa: BLE001
+                param_count = 2
+
+            try:
+                if param_count >= 3:
+                    setter(self._api_key, self._api_secret, self._api_passphrase)
+                elif param_count == 2:
+                    setter(
+                        {
+                            "apiKey": self._api_key,
+                            "apiSecret": self._api_secret,
+                            "apiPassphrase": self._api_passphrase,
+                        }
+                    )
+                else:
+                    setter()
+            except Exception:  # noqa: BLE001
+                self._derive_and_set_api_creds(client)
+        else:
+            self._derive_and_set_api_creds(client)
+
+        if getattr(client, "api_creds", None) is None:
+            self._derive_and_set_api_creds(client)
+
+    def _derive_and_set_api_creds(self, client: Any) -> None:
+        creator = getattr(client, "create_or_derive_api_creds", None)
+        setter = getattr(client, "set_api_creds", None)
+        if creator is None or setter is None:
+            raise RuntimeError(
+                "No API creds provided and client cannot derive creds. Set POLYMARKET_API_KEY/SECRET/PASSPHRASE."
+            )
+        creds = creator()
+        setter(creds)
