@@ -125,6 +125,9 @@ class PaperExecutor:
         _ = order_id
         return True
 
+    def ack_order_filled(self, order_id: str) -> None:
+        _ = order_id
+
     def snapshot(self, marks: dict[str, Decimal] | None = None) -> PaperLedgerSnapshot:
         if marks:
             self._marks.update(marks)

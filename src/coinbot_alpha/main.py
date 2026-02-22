@@ -199,6 +199,74 @@ def main() -> None:
             quote_notional,
         )
 
+    def _simulate_maker_shadow_fill(
+        *,
+        symbol: str,
+        series: str,
+        market: ActiveClobMarket,
+        side: Side,
+        quote_price: Decimal,
+        trigger_yes_price: Decimal,
+    ) -> None:
+        intent = OrderIntent(
+            intent_id=f"maker_shadow_{uuid4()}",
+            symbol=symbol,
+            side=side,
+            notional_usd=Decimal(str(cfg.demo.maker_notional_usd)),
+            slippage_bps=0,
+        )
+        decision = risk.check_and_apply(intent)
+        if not decision.allowed:
+            metrics.record_reject()
+            audit.write(
+                {
+                    "intent_id": intent.intent_id,
+                    "series": series,
+                    "slug": market.slug,
+                    "side": side.value,
+                    "notional_usd": str(intent.notional_usd),
+                    "quote_price": str(quote_price),
+                    "trigger_yes_price": str(trigger_yes_price),
+                    "blocked_reason": decision.reason,
+                    "status": "maker_shadow_reject",
+                }
+            )
+            return
+
+        fill = executor.submit(intent, quote_price)
+        latency_ms = (time.perf_counter_ns() - loop_start_ns) / 1_000_000
+        metrics.record_submit(latency_ms)
+        audit.write(
+            {
+                "intent_id": intent.intent_id,
+                "series": series,
+                "slug": market.slug,
+                "side": side.value,
+                "notional_usd": str(intent.notional_usd),
+                "quote_price": str(quote_price),
+                "trigger_yes_price": str(trigger_yes_price),
+                "fill_price": str(fill.fill_price),
+                "qty": str(fill.qty),
+                "position_qty_after": str(fill.position_qty_after),
+                "avg_entry_price_after": str(fill.avg_entry_price_after),
+                "realized_pnl_delta": str(fill.realized_pnl_delta),
+                "realized_pnl_total": str(fill.realized_pnl_total),
+                "submit_latency_ms": round(latency_ms, 3),
+                "status": "maker_shadow_fill",
+            }
+        )
+        log.info(
+            "maker_shadow_fill series=%s slug=%s symbol=%s side=%s quote_px=%s trigger_yes_px=%s qty=%s pos_qty_after=%s",
+            series,
+            market.slug,
+            symbol,
+            side.value,
+            quote_price,
+            trigger_yes_price,
+            fill.qty,
+            fill.position_qty_after,
+        )
+
     def _refresh_market(series: str, seed_slug: str) -> None:
         try:
             market = resolver.resolve_from_seed(seed_slug)
@@ -413,6 +481,39 @@ def main() -> None:
                     _sync_maker_quote(symbol=symbol, side=Side.SELL, target_price=ask_px, quote_notional=quote_notional)
                 except Exception as exc:  # noqa: BLE001
                     log.warning("maker_quote_error symbol=%s series=%s err=%s", symbol, series, exc)
+
+                # Shadow-only fill approximation: if market prints through our quote,
+                # count it as a fill at the quoted maker price.
+                if cfg.execution.dry_run:
+                    state = maker_states.get(symbol)
+                    if state is not None:
+                        if state.buy_order_id is not None and state.buy_price is not None and yes_price <= state.buy_price:
+                            filled_order_id = state.buy_order_id
+                            _simulate_maker_shadow_fill(
+                                symbol=symbol,
+                                series=series,
+                                market=market,
+                                side=Side.BUY,
+                                quote_price=state.buy_price,
+                                trigger_yes_price=yes_price,
+                            )
+                            executor.ack_order_filled(filled_order_id)
+                            state.buy_order_id = None
+                            state.buy_price = None
+
+                        if state.sell_order_id is not None and state.sell_price is not None and yes_price >= state.sell_price:
+                            filled_order_id = state.sell_order_id
+                            _simulate_maker_shadow_fill(
+                                symbol=symbol,
+                                series=series,
+                                market=market,
+                                side=Side.SELL,
+                                quote_price=state.sell_price,
+                                trigger_yes_price=yes_price,
+                            )
+                            executor.ack_order_filled(filled_order_id)
+                            state.sell_order_id = None
+                            state.sell_price = None
                 continue
 
             min_hold_sec = cfg.demo.min_hold_sec_5m if series == "5m" else cfg.demo.min_hold_sec_15m

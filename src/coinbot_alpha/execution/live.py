@@ -200,6 +200,12 @@ class LiveExecutor:
             raise RuntimeError(f"cancel rejected: {resp}")
         return True
 
+    def ack_order_filled(self, order_id: str) -> None:
+        if not order_id:
+            return
+        if self._dry_run:
+            self._shadow_order_ids.discard(order_id)
+
     def _post_live_order_raw(
         self, intent: OrderIntent, token_id: str, limit_price: Decimal, qty: Decimal
     ) -> dict[str, Any] | Any:
